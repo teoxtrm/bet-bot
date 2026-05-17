@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(New-Item -ItemType Directory -Force -Path \"C:/laragon/www/bet-bot/scrapers\")",
+      "Bash(New-Item -ItemType Directory -Force -Path \"C:/laragon/www/bet-bot/models\")",
+      "Bash(New-Item -ItemType Directory -Force -Path \"C:/laragon/www/bet-bot/utils\")",
+      "Bash(New-Item -ItemType Directory -Force -Path \"C:/laragon/www/bet-bot/data/raw\")",
+      "Bash(New-Item -ItemType Directory -Force -Path \"C:/laragon/www/bet-bot/data/processed\")",
+      "PowerShell(Get-ChildItem -Recurse \"C:/laragon/www/bet-bot/\" | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem -Recurse \"C:/laragon/www/bet-bot/\" | Where-Object { !$_.PSIsContainer } | ForEach-Object { $_.FullName.Replace\\(\"C:\\\\laragon\\\\www\\\\bet-bot\\\\\", \"\"\\) })",
+      "PowerShell(pip *)",
+      "Bash(python -c \"import requests, bs4, pandas, numpy, rich; print\\('OK - all imports work'\\)\")"
+    ]
+  }
+}

@@ -1,5 +1,5 @@
 """
-Value Betting Bot v0.3
+Value Betting Bot v0.4
 =======================
 python main.py
 
@@ -10,6 +10,8 @@ Modes:
   4. Manual         — χειροκίνητη εισαγωγή stats & αποδόσεων
   5. Value Scan     — σάρωση ΟΛΩΝ των αγώνων ενός πρωταθλήματος
   6. Update Stats   — ενημέρωση Greek Super League stats cache
+  7. Dashboard      — στατιστικά & ιστορικό bets
+  8. Settlement     — κλείσιμο Pending bets
   q. Έξοδος
 """
 
@@ -37,6 +39,14 @@ from scrapers.live_scanner import run_live_loop, scan_once, get_live_scores
 from utils.helpers import (
     console, print_value_bet, print_comparison_table, print_pregame_probs,
 )
+from utils.database import (
+    init_db, track_value_bet, get_pending_bets, auto_settle_from_api,
+    manual_settle, void_bet, get_stats,
+)
+from utils.dashboard import print_dashboard, print_settlement_preview
+
+# Αρχικοποίηση DB κατά την εκκίνηση
+init_db()
 
 BANKROLL = float(os.getenv("BANKROLL", "1000"))
 
@@ -211,17 +221,21 @@ def _analyze_with_pinnacle(match_label: str, event: dict, home_raw: dict, away_r
         _value_scan_event(match_label, event, probs_approx, source="Pinnacle no-vig")
 
 
-def _value_scan_event(match_label: str, event: dict, probs: dict, source: str = "Poisson model"):
-    """Σκανάρει όλα τα bookmakers για value."""
+def _value_scan_event(match_label: str, event: dict, probs: dict,
+                       source: str = "Poisson model", league: str = "unknown",
+                       auto_track: bool = False):
+    """Σκανάρει όλα τα bookmakers για value και προσφέρει tracking στη DB."""
     console.print(f"\n[bold]Value Scan[/bold] [dim](πηγή: {source})[/dim]")
     found_any = False
 
     checks = [
         ("Over 2.5", probs.get("over_2_5"), "totals", "over_2_5"),
         ("Over 1.5", probs.get("over_1_5"), "totals", "over_1_5"),
-        ("BTTS Yes", probs.get("btts_yes"), "btts", "yes"),
-        ("Home Win", probs.get("over_1_5"), "1x2", "home"),
+        ("BTTS Yes", probs.get("btts_yes"), "btts",   "yes"),
+        ("Home Win", probs.get("over_1_5"), "1x2",    "home"),
     ]
+
+    home_team, away_team = match_label.split(" vs ", 1) if " vs " in match_label else (match_label, "")
 
     for label, our_prob, mkt, sub in checks:
         if not our_prob:
@@ -236,6 +250,34 @@ def _value_scan_event(match_label: str, event: dict, probs: dict, source: str = 
             found_any = True
             kelly = kelly_criterion(our_prob, best["bookmaker_odds"], BANKROLL)
             print_value_bet(match_label, label, best, kelly)
+
+            # ── Tracking στη DB ──────────────────────────────────────────────
+            should_track = auto_track
+            if not auto_track:
+                ans = Prompt.ask(
+                    f"  [bold]Καταγραφή στη DB;[/bold]",
+                    choices=["y", "n"], default="y"
+                )
+                should_track = (ans == "y")
+
+            if should_track:
+                bet_id = track_value_bet(
+                    value_result = {**best, "bookmaker": best["bookmaker"]},
+                    kelly_result = kelly,
+                    match_info   = {
+                        "event_id":   event.get("id", ""),
+                        "match_date": event.get("commence", "")[:10],
+                        "home_team":  home_team.strip(),
+                        "away_team":  away_team.strip(),
+                        "bet_type":   label,
+                    },
+                    league       = league,
+                    is_live      = False,
+                )
+                if bet_id > 0:
+                    console.print(f"  [green]Αποθηκεύτηκε στη DB ως #{bet_id}[/green]")
+                elif bet_id == -1:
+                    console.print("  [dim]Duplicate — ήδη υπάρχει στη DB[/dim]")
 
     if not found_any:
         console.print("[yellow]Δεν βρέθηκε value bet (threshold 5%).[/yellow]")
@@ -410,6 +452,98 @@ def run_full_scan():
         console.print("[yellow]Κανένα value bet σε αυτό το πρωτάθλημα σήμερα.[/yellow]")
     else:
         console.print(f"\n[bold]Σύνολο value bets:[/bold] [green]{total_value}[/green]")
+        ans = Prompt.ask("\nΚαταγραφή ΟΛΩΝ στη DB;", choices=["y", "n"], default="y")
+        if ans == "y":
+            tracked = 0
+            for event in events:
+                p_1x2 = get_pinnacle_no_vig_probs(event)
+                p_ou  = get_pinnacle_no_vig_totals(event, 2.5)
+                checks2 = []
+                if p_ou:
+                    checks2 += [("Over 2.5", p_ou["over_prob"], "totals", "over_2_5"),
+                                 ("Under 2.5", p_ou["under_prob"], "totals", "under_2_5")]
+                if p_1x2:
+                    checks2 += [("Home", p_1x2["home"], "1x2", "home"),
+                                 ("Draw", p_1x2["draw"], "1x2", "draw"),
+                                 ("Away", p_1x2["away"], "1x2", "away")]
+                for mkt_label, our_prob, mkt, sub in checks2:
+                    bm_odds2 = _collect_bm_odds(event, mkt, sub)
+                    if not bm_odds2:
+                        continue
+                    comps2 = compare_bookmakers(our_prob, bm_odds2)
+                    best2  = comps2[0]
+                    if best2["is_value_bet"]:
+                        kelly2 = kelly_criterion(our_prob, best2["bookmaker_odds"], BANKROLL)
+                        bet_id = track_value_bet(
+                            value_result = {**best2},
+                            kelly_result = kelly2,
+                            match_info   = {
+                                "event_id":   event.get("id", ""),
+                                "match_date": event.get("commence", "")[:10],
+                                "home_team":  event["home_team"],
+                                "away_team":  event["away_team"],
+                                "bet_type":   mkt_label,
+                            },
+                            league = league_key,
+                        )
+                        if bet_id > 0:
+                            tracked += 1
+            console.print(f"[green]{tracked} bets αποθηκεύτηκαν στη DB.[/green]")
+
+
+# ─── MODE 7: DASHBOARD ───────────────────────────────────────────────────────
+
+def run_dashboard():
+    print_dashboard()
+
+
+# ─── MODE 8: SETTLEMENT ──────────────────────────────────────────────────────
+
+def run_settlement():
+    console.rule("[bold yellow]SETTLEMENT")
+
+    pending = get_pending_bets()
+    print_settlement_preview(pending)
+
+    if not pending:
+        return
+
+    console.print("\nΕπιλογές:")
+    console.print("  [cyan]1[/cyan]  Αυτόματο settlement (The Odds API)")
+    console.print("  [cyan]2[/cyan]  Χειροκίνητο settlement (εισαγωγή σκορ)")
+    console.print("  [cyan]3[/cyan]  Void συγκεκριμένο bet")
+    console.print("  [cyan]q[/cyan]  Πίσω\n")
+
+    choice = Prompt.ask("Επιλογή", choices=["1", "2", "3", "q"], default="1")
+
+    if choice == "1":
+        console.print("\n[dim]Σύνδεση με The Odds API για αποτελέσματα...[/dim]")
+        result = auto_settle_from_api()
+        console.print(
+            f"\n[bold]Settlement:[/bold] "
+            f"[green]{result['settled']} settled[/green]  |  "
+            f"[yellow]{result['skipped']} skipped[/yellow]  |  "
+            f"[red]{result['errors']} errors[/red]"
+        )
+        if result["settled"] > 0:
+            console.print("\n[dim]Τρέξε Mode 7 για ενημερωμένο Dashboard.[/dim]")
+
+    elif choice == "2":
+        bet_id     = IntPrompt.ask("ID στοιχήματος (από τη λίστα πάνω)")
+        home_goals = IntPrompt.ask("Γκολ γηπεδούχου")
+        away_goals = IntPrompt.ask("Γκολ φιλοξενούμενου")
+        result     = manual_settle(bet_id, home_goals, away_goals)
+        if "error" in result:
+            console.print(f"[red]{result['error']}[/red]")
+        else:
+            pnl_str = f"€{result['profit_loss']:+.2f}"
+            color   = "green" if result["profit_loss"] >= 0 else "red"
+            console.print(f"\n[bold]Bet #{bet_id}:[/bold] [{color}]{result['status']}[/{color}]  PnL=[{color}]{pnl_str}[/{color}]")
+
+    elif choice == "3":
+        bet_id = IntPrompt.ask("ID στοιχήματος για Void")
+        void_bet(bet_id)
+        console.print(f"[dim]Bet #{bet_id} marked as Void.[/dim]")
 
 
 # ─── MODE 6: UPDATE GREEK STATS ──────────────────────────────────────────────
@@ -447,16 +581,32 @@ def run_update_greek_stats():
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
-    console.print("\n[bold blue]Value Betting Bot v0.3[/bold blue]\n")
+    # Quick stats στο header
+    try:
+        s = get_stats()
+        pending_count = s.get("pending") or 0
+        pnl           = s.get("total_pnl") or 0
+        pnl_str       = f"€{pnl:+.2f}" if (s.get("total_bets") or 0) > 0 else "—"
+        pnl_col       = "green" if pnl >= 0 else "red"
+        header_extra  = (
+            f"  [dim]Pending: [yellow]{pending_count}[/yellow]  |  "
+            f"PnL: [{pnl_col}]{pnl_str}[/{pnl_col}][/dim]"
+        )
+    except Exception:
+        header_extra = ""
+
+    console.print(f"\n[bold blue]Value Betting Bot v0.4[/bold blue]{header_extra}\n")
     console.print("  [cyan]1[/cyan]  Demo")
     console.print("  [cyan]2[/cyan]  Pre-game ανάλυση")
     console.print("  [cyan]3[/cyan]  Live Scanner (polling)")
     console.print("  [cyan]4[/cyan]  Manual εισαγωγή")
     console.print("  [cyan]5[/cyan]  Full Value Scan (όλοι οι αγώνες)")
     console.print("  [cyan]6[/cyan]  Update Greek Super League stats")
+    console.print("  [cyan]7[/cyan]  [bold]Dashboard[/bold] — στατιστικά & ιστορικό")
+    console.print("  [cyan]8[/cyan]  [bold]Settlement[/bold] — κλείσιμο Pending bets")
     console.print("  [cyan]q[/cyan]  Έξοδος\n")
 
-    choice = Prompt.ask("Επιλογή", choices=["1","2","3","4","5","6","q"], default="1")
+    choice = Prompt.ask("Επιλογή", choices=["1","2","3","4","5","6","7","8","q"], default="1")
     {
         "1": run_demo,
         "2": run_pregame,
@@ -464,6 +614,8 @@ def main():
         "4": run_manual,
         "5": run_full_scan,
         "6": run_update_greek_stats,
+        "7": run_dashboard,
+        "8": run_settlement,
     }.get(choice, lambda: sys.exit(0))()
 
 

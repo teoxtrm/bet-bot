@@ -226,6 +226,33 @@ def run_live_loop(sport_key: str, interval_seconds: int = 120, max_iterations: i
                             f"Over 2.5 @ [yellow]{vb['bookmaker_odds']}[/yellow] "
                             f"({vb['bookmaker']}) | edge=[green]{vb['value_edge_pct']}[/green]"
                         )
+                        # Auto-track στη DB
+                        try:
+                            from utils.database import track_value_bet
+                            from models.value_calculator import kelly_criterion
+                            kelly = kelly_criterion(
+                                r.get("live_over_prob", 0.5),
+                                vb["bookmaker_odds"],
+                                float(os.getenv("BANKROLL", "1000"))
+                            )
+                            bet_id = track_value_bet(
+                                value_result = vb,
+                                kelly_result = kelly,
+                                match_info   = {
+                                    "event_id":   r.get("id", ""),
+                                    "match_date": r.get("commence", "")[:10],
+                                    "home_team":  r["home_team"],
+                                    "away_team":  r["away_team"],
+                                    "bet_type":   "Over 2.5",
+                                },
+                                league     = sport_key,
+                                is_live    = True,
+                                live_minute= r.get("minute"),
+                            )
+                            if bet_id > 0:
+                                console.print(f"  [dim]DB: tracked as #{bet_id}[/dim]")
+                        except Exception as db_err:
+                            console.print(f"  [dim]DB tracking error: {db_err}[/dim]")
 
             console.print(f"[dim]Επόμενο scan σε {interval_seconds}s...[/dim]")
             time.sleep(interval_seconds)

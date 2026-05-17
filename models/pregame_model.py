@@ -6,6 +6,9 @@ Pre-game μοντέλο πιθανοτήτων βάσει φόρμας ομάδ�
 import math
 from dataclasses import dataclass
 
+# 1st half carries ~43% of full-game expected goals (research-backed average)
+HT_GOALS_FACTOR = 0.43
+
 
 @dataclass
 class TeamStats:
@@ -63,6 +66,11 @@ def calculate_pregame_probs(home: TeamStats, away: TeamStats, league_avg_goals: 
     corners_over_95 = poisson_over_prob(expected_corners, 9.5)
     corners_over_105 = poisson_over_prob(expected_corners, 10.5)
 
+    # 1st Half — scaled expected goals for the first 45 minutes
+    lambda_ht_total = lambda_total * HT_GOALS_FACTOR
+    ht_over_0_5 = poisson_over_prob(lambda_ht_total, 0.5)
+    ht_over_1_5 = poisson_over_prob(lambda_ht_total, 1.5)
+
     return {
         "expected_goals_home": round(lambda_home, 3),
         "expected_goals_away": round(lambda_away, 3),
@@ -74,4 +82,6 @@ def calculate_pregame_probs(home: TeamStats, away: TeamStats, league_avg_goals: 
         "btts_no": round(1 - btts_yes, 4),
         "corners_over_9_5": round(corners_over_95, 4),
         "corners_over_10_5": round(corners_over_105, 4),
+        "ht_over_0_5": round(ht_over_0_5, 4),
+        "ht_over_1_5": round(ht_over_1_5, 4),
     }

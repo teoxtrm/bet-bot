@@ -148,6 +148,15 @@ def _parse_event(event: dict) -> dict:
                     "no":  price_map.get("No"),
                 }
 
+            elif mkey == "totals_h1":
+                ht_totals = {}
+                for o in outcomes:
+                    pt  = o.get("point", "")
+                    key = f"over_{str(pt).replace('.','_')}" if o["name"] == "Over" \
+                          else f"under_{str(pt).replace('.','_')}"
+                    ht_totals[key] = o["price"]
+                result["odds"][bm_key]["totals_h1"] = ht_totals
+
     return result
 
 
@@ -256,6 +265,46 @@ def get_pinnacle_no_vig_totals(event: dict, point: float = 2.5) -> dict | None:
         "point":       point,
         "over_prob":   round(ip_o / total, 4),
         "under_prob":  round(ip_u / total, 4),
+        "over_odds_pinnacle":  over_odds,
+        "under_odds_pinnacle": under_odds,
+        "pinnacle_margin_pct": round((total - 1) * 100, 2),
+    }
+
+
+def get_pinnacle_no_vig_ht_totals(event: dict, point: float = 0.5) -> dict | None:
+    """
+    No-vig πιθανότητες 1ου Ημιχρόνου Over/Under από Pinnacle.
+    Ίδια λογική με get_pinnacle_no_vig_totals αλλά διαβάζει totals_h1.
+    """
+    pin    = event.get("odds", {}).get("pinnacle", {})
+    totals = pin.get("totals_h1", {})
+
+    pt_str    = str(point).replace(".", "_")
+    over_odds  = totals.get(f"over_{pt_str}")
+    under_odds = totals.get(f"under_{pt_str}")
+
+    if not over_odds or not under_odds:
+        available = [float(k.replace("over_", "").replace("_", "."))
+                     for k in totals if k.startswith("over_")]
+        if not available:
+            return None
+        closest    = min(available, key=lambda x: abs(x - point))
+        pt_str     = str(closest).replace(".", "_")
+        over_odds  = totals.get(f"over_{pt_str}")
+        under_odds = totals.get(f"under_{pt_str}")
+        point      = closest
+
+    if not over_odds or not under_odds:
+        return None
+
+    ip_o  = 1 / over_odds
+    ip_u  = 1 / under_odds
+    total = ip_o + ip_u
+
+    return {
+        "point":               point,
+        "over_prob":           round(ip_o / total, 4),
+        "under_prob":          round(ip_u / total, 4),
         "over_odds_pinnacle":  over_odds,
         "under_odds_pinnacle": under_odds,
         "pinnacle_margin_pct": round((total - 1) * 100, 2),

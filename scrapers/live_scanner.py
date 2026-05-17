@@ -72,7 +72,7 @@ def get_live_odds_for_event(sport_key: str, event_id: str) -> dict | None:
     """
     data = _get(
         f"/sports/{sport_key}/odds/",
-        {"regions": "eu,uk", "markets": "h2h,totals", "oddsFormat": "decimal", "dateFormat": "iso"},
+        {"regions": "eu,uk", "markets": "h2h,totals,totals_h1", "oddsFormat": "decimal", "dateFormat": "iso"},
     )
     if not data:
         return None
@@ -107,7 +107,8 @@ def scan_once(sport_key: str, our_model_probs: dict = None) -> list:
     Returns:
         Λίστα live αγώνων με enriched δεδομένα
     """
-    from scrapers.odds_api import get_pinnacle_no_vig_totals, get_pinnacle_no_vig_probs, _parse_event
+    from scrapers.odds_api import (get_pinnacle_no_vig_totals, get_pinnacle_no_vig_probs,
+                                    get_pinnacle_no_vig_ht_totals, _parse_event)
     from models.live_model import live_over_probability
     from models.value_calculator import compare_bookmakers
 
@@ -118,7 +119,7 @@ def scan_once(sport_key: str, our_model_probs: dict = None) -> list:
     # Τράβα odds για όλο το sport (1 request αντί για N)
     raw_odds = _get(
         f"/sports/{sport_key}/odds/",
-        {"regions": "eu,uk", "markets": "h2h,totals", "oddsFormat": "decimal", "dateFormat": "iso"},
+        {"regions": "eu,uk", "markets": "h2h,totals,totals_h1", "oddsFormat": "decimal", "dateFormat": "iso"},
     )
     odds_by_id = {}
     if raw_odds:
@@ -155,6 +156,22 @@ def scan_once(sport_key: str, our_model_probs: dict = None) -> list:
                     entry["pinnacle_over_prob"] = p_ou["over_prob"]
                     entry["live_over_prob"]     = live_prob
                     entry["value_bets"]         = value_hits
+
+        # HT Over 0.5 — critical window: 15-25 min AND score 0-0
+        entry["ht_value_bets"] = []
+        if ev_odds and 15 <= minute <= 25 and match["total_goals"] == 0:
+            p_ht = get_pinnacle_no_vig_ht_totals(ev_odds, 0.5)
+            if p_ht:
+                pt_str = str(p_ht["point"]).replace(".", "_")
+                bm_ht = {}
+                for bm_key, bm_data in ev_odds.get("odds", {}).items():
+                    o = bm_data.get("totals_h1", {}).get(f"over_{pt_str}")
+                    if o:
+                        bm_ht[bm_key] = o
+                if bm_ht:
+                    ht_comps = compare_bookmakers(p_ht["over_prob"], bm_ht)
+                    entry["ht_value_bets"] = [c for c in ht_comps if c["is_value_bet"]]
+                    entry["ht_over_prob"]  = p_ht["over_prob"]
 
         enriched.append(entry)
 
@@ -217,7 +234,15 @@ def run_live_loop(sport_key: str, interval_seconds: int = 120, max_iterations: i
 
                 console.print(table)
 
-                # Alert για value bets
+                # Alert για Over 2.5 value bets
+                for r in results:
+                    for vb in r.get("ht_value_bets", []):
+                        console.print(
+                            f"[bold yellow]>>> ⚡ HT VALUE:[/bold yellow] "
+                            f"{r['home_team']} vs {r['away_team']} [{r['minute']}'] "
+                            f"Over 0.5 HT @ [yellow]{vb['bookmaker_odds']}[/yellow] "
+                            f"({vb['bookmaker']}) | edge=[green]{vb['value_edge_pct']}[/green]"
+                        )
                 for r in results:
                     for vb in r.get("value_bets", []):
                         console.print(

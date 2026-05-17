@@ -9,7 +9,9 @@
       "PowerShell(Get-ChildItem -Recurse \"C:/laragon/www/bet-bot/\" | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
       "PowerShell(Get-ChildItem -Recurse \"C:/laragon/www/bet-bot/\" | Where-Object { !$_.PSIsContainer } | ForEach-Object { $_.FullName.Replace\\(\"C:\\\\laragon\\\\www\\\\bet-bot\\\\\", \"\"\\) })",
       "PowerShell(pip *)",
-      "Bash(python -c \"import requests, bs4, pandas, numpy, rich; print\\('OK - all imports work'\\)\")"
+      "Bash(python -c \"import requests, bs4, pandas, numpy, rich; print\\('OK - all imports work'\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -c \"import customtkinter; print\\('customtkinter', customtkinter.__version__\\)\")"
     ]
   }
 }

@@ -51,14 +51,22 @@ def print_comparison_table(match: str, market: str, comparisons: list):
 
 
 def print_pregame_probs(match: str, probs: dict):
+    # Keys που είναι expected goals (αριθμοί, όχι πιθανότητες)
+    GOAL_KEYS = {"expected_goals_home", "expected_goals_away", "expected_goals_total"}
+
     table = Table(title=f"Pre-game Model: {match}", box=box.SIMPLE)
     table.add_column("Αγορά", style="bold")
-    table.add_column("Πιθανότητα", justify="right", style="cyan")
+    table.add_column("Τιμή", justify="right", style="cyan")
     table.add_column("Implied Odds", justify="right", style="yellow")
 
     for key, val in probs.items():
-        if isinstance(val, float):
+        if not isinstance(val, float):
+            continue
+        label = key.replace("_", " ").title()
+        if key in GOAL_KEYS:
+            table.add_row(label, f"{val:.2f} γκολ", "—")
+        else:
             implied = f"{1/val:.2f}" if val > 0 else "—"
-            table.add_row(key.replace("_", " ").title(), f"{val:.1%}", implied)
+            table.add_row(label, f"{val:.1%}", implied)
 
     console.print(table)

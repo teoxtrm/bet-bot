@@ -81,3 +81,65 @@ def live_over_probability(
         "expected_goals_remaining": round(expected_remaining, 3),
         "status": "IN_PLAY",
     }
+
+
+def live_ht_probability(
+    pregame_ht_prob: float,
+    ht_goals_so_far: int,
+    minute: int,
+    target: float = 0.5,
+) -> dict:
+    """
+    Live probability for 1st-half Over markets.
+
+    Derives Poisson lambda from the Pinnacle no-vig pre-game HT probability,
+    then scales to the remaining first-half time and adjusts for goals already scored.
+
+    Args:
+        pregame_ht_prob: Pinnacle no-vig P(Over target) for the full 45 min at kick-off
+        ht_goals_so_far: Goals scored so far this half (= total_goals when minute ≤ 45)
+        minute: Current match minute (1–45)
+        target: 0.5 or 1.5
+    """
+    import math
+
+    if minute > 45:
+        return {"live_ht_prob": None, "settled": True}
+
+    k_need = int(target) + 1          # goals total needed: O0.5 → 1, O1.5 → 2
+
+    if ht_goals_so_far >= k_need:
+        return {"live_ht_prob": 1.0, "settled": False}
+
+    still_need = k_need - ht_goals_so_far
+    p = max(0.001, min(0.999, pregame_ht_prob))
+
+    if target <= 0.5:
+        # P(X ≥ 1) = 1 − e^(−λ) = p  →  exact inversion
+        lambda_ht = -math.log(1.0 - p)
+    else:
+        # P(X ≥ 2) = 1 − e^(−λ)(1 + λ) = p  →  binary search
+        lo, hi = 1e-6, 30.0
+        for _ in range(64):
+            mid = (lo + hi) / 2
+            if 1.0 - math.exp(-mid) * (1.0 + mid) < p:
+                lo = mid
+            else:
+                hi = mid
+        lambda_ht = (lo + hi) / 2
+
+    remaining_frac = max(0.0, (45.0 - minute) / 45.0)
+    lambda_rem     = lambda_ht * remaining_frac
+
+    # P(X_rem < still_need) = sum of Poisson PMF for k = 0..still_need-1
+    p_fewer = sum(
+        math.exp(-lambda_rem) * (lambda_rem ** k) / math.factorial(k)
+        for k in range(still_need)
+    )
+
+    return {
+        "live_ht_prob":    round(max(0.0, min(1.0, 1.0 - p_fewer)), 4),
+        "settled":         False,
+        "lambda_ht":       round(lambda_ht, 4),
+        "remaining_frac":  round(remaining_frac, 3),
+    }

@@ -109,7 +109,7 @@ def scan_once(sport_key: str, our_model_probs: dict = None) -> list:
     """
     from scrapers.odds_api import (get_pinnacle_no_vig_totals, get_pinnacle_no_vig_probs,
                                     get_pinnacle_no_vig_ht_totals, _parse_event)
-    from models.live_model import live_over_probability
+    from models.live_model import live_over_probability, live_ht_probability
     from models.value_calculator import compare_bookmakers
 
     live_scores  = get_live_scores(sport_key)
@@ -157,21 +157,44 @@ def scan_once(sport_key: str, our_model_probs: dict = None) -> list:
                     entry["live_over_prob"]     = live_prob
                     entry["value_bets"]         = value_hits
 
-        # HT Over 0.5 — critical window: 15-25 min AND score 0-0
-        entry["ht_value_bets"] = []
-        if ev_odds and 15 <= minute <= 25 and match["total_goals"] == 0:
-            p_ht = get_pinnacle_no_vig_ht_totals(ev_odds, 0.5)
-            if p_ht:
+        # HT markets — scan both O0.5 and O1.5 for the full 1st half
+        entry["ht_05_prob"] = None
+        entry["ht_05_bets"] = []
+        entry["ht_15_prob"] = None
+        entry["ht_15_bets"] = []
+        if ev_odds and minute <= 45:
+            ht_goals = match["total_goals"]
+            for ht_target, prob_key, bets_key in [
+                (0.5, "ht_05_prob", "ht_05_bets"),
+                (1.5, "ht_15_prob", "ht_15_bets"),
+            ]:
+                p_ht = get_pinnacle_no_vig_ht_totals(ev_odds, ht_target)
+                if not p_ht or abs(p_ht["point"] - ht_target) > 0.3:
+                    continue
+                ht_result = live_ht_probability(p_ht["over_prob"], ht_goals, minute, ht_target)
+                if ht_result.get("settled"):
+                    continue
+                live_ht_prob = ht_result["live_ht_prob"]
+                entry[prob_key] = live_ht_prob
                 pt_str = str(p_ht["point"]).replace(".", "_")
-                bm_ht = {}
-                for bm_key, bm_data in ev_odds.get("odds", {}).items():
-                    o = bm_data.get("totals_h1", {}).get(f"over_{pt_str}")
-                    if o:
-                        bm_ht[bm_key] = o
+                bm_ht = {
+                    bm: bd.get("totals_h1", {}).get(f"over_{pt_str}")
+                    for bm, bd in ev_odds.get("odds", {}).items()
+                    if bm != "pinnacle" and bd.get("totals_h1", {}).get(f"over_{pt_str}")
+                }
                 if bm_ht:
-                    ht_comps = compare_bookmakers(p_ht["over_prob"], bm_ht)
-                    entry["ht_value_bets"] = [c for c in ht_comps if c["is_value_bet"]]
-                    entry["ht_over_prob"]  = p_ht["over_prob"]
+                    ht_comps = compare_bookmakers(live_ht_prob, bm_ht)
+                    entry[bets_key] = [c for c in ht_comps if c["is_value_bet"]]
+
+        # Fetch live stats from API-Football when any value bet is found
+        entry["live_stats"] = None
+        has_value = bool(entry["value_bets"] or entry["ht_05_bets"] or entry["ht_15_bets"])
+        if has_value:
+            try:
+                from scrapers.apifootball import get_live_stats
+                entry["live_stats"] = get_live_stats(match["home_team"], match["away_team"])
+            except Exception:
+                pass  # stats are supplementary — never block the main result
 
         enriched.append(entry)
 
@@ -234,22 +257,42 @@ def run_live_loop(sport_key: str, interval_seconds: int = 120, max_iterations: i
 
                 console.print(table)
 
-                # Alert για Over 2.5 value bets
+                # Alerts για value bets (HT + full-game)
+                all_value_alerts = []
                 for r in results:
-                    for vb in r.get("ht_value_bets", []):
-                        console.print(
-                            f"[bold yellow]>>> ⚡ HT VALUE:[/bold yellow] "
-                            f"{r['home_team']} vs {r['away_team']} [{r['minute']}'] "
-                            f"Over 0.5 HT @ [yellow]{vb['bookmaker_odds']}[/yellow] "
-                            f"({vb['bookmaker']}) | edge=[green]{vb['value_edge_pct']}[/green]"
-                        )
+                    stats = r.get("live_stats") or {}
+                    sot   = stats.get("shots_ot_total", 0)
+                    stats_str = (
+                        f" | SoT={stats['shots_str']} Corners={stats['corners_str']} "
+                        f"Poss={stats['possession_str']}"
+                        if stats else ""
+                    )
+                    for ht_label, bets_key in [("O0.5 HT", "ht_05_bets"), ("O1.5 HT", "ht_15_bets")]:
+                        for vb in r.get(bets_key, []):
+                            conf = "[bold magenta]HIGH CONF![/bold magenta]" if sot >= 3 else "[bold yellow]⚡ HT VALUE[/bold yellow]"
+                            console.print(
+                                f"{conf}: "
+                                f"{r['home_team']} vs {r['away_team']} [{r['minute']}'] "
+                                f"{ht_label} @ [yellow]{vb['bookmaker_odds']}[/yellow] "
+                                f"({vb['bookmaker']}) | edge=[green]{vb['value_edge_pct']}[/green]"
+                                f"{stats_str}"
+                            )
                 for r in results:
+                    stats = r.get("live_stats") or {}
+                    sot   = stats.get("shots_ot_total", 0)
+                    stats_str = (
+                        f" | SoT={stats['shots_str']} Corners={stats['corners_str']} "
+                        f"Poss={stats['possession_str']}"
+                        if stats else ""
+                    )
                     for vb in r.get("value_bets", []):
+                        conf = "[bold magenta]★ HIGH CONF![/bold magenta]" if sot >= 3 else "[bold green]>>> VALUE BET[/bold green]"
                         console.print(
-                            f"[bold green]>>> VALUE BET:[/bold green] "
+                            f"{conf}: "
                             f"{r['home_team']} vs {r['away_team']} [{r['minute']}'] "
                             f"Over 2.5 @ [yellow]{vb['bookmaker_odds']}[/yellow] "
                             f"({vb['bookmaker']}) | edge=[green]{vb['value_edge_pct']}[/green]"
+                            f"{stats_str}"
                         )
                         # Auto-track στη DB
                         try:

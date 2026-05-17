@@ -32,6 +32,15 @@ C_ROW_ALT  = "#1e1e30"
 C_TREE_BG  = "#141428"
 C_TREE_HDR = "#252540"
 
+LEAGUE_ABBREV = {
+    "premier_league":  "EPL",  "champions_league": "UCL",
+    "la_liga":         "ESP",  "bundesliga":        "GER",
+    "serie_a":         "ITA",  "ligue_1":           "FRA",
+    "eredivisie":      "NED",  "primeira_liga":     "POR",
+    "championship":    "CH",   "super_league":      "GRE",
+    "europa_league":   "UEL",  "conference":        "UECL",
+}
+
 
 # ── Treeview dark style (shared) ─────────────────────────────────────────────
 def _apply_tree_style(style_name: str):
@@ -109,10 +118,11 @@ class PregameFrame(ctk.CTkFrame):
                      font=ctk.CTkFont(size=13)).pack(side="left")
 
         from scrapers.odds_api import SPORT_KEYS
-        self._league_var = ctk.StringVar(value="premier_league")
+        _league_opts = ["ALL LEAGUES"] + list(SPORT_KEYS.keys())
+        self._league_var = ctk.StringVar(value="ALL LEAGUES")
         ctk.CTkComboBox(
-            ctrl, values=list(SPORT_KEYS.keys()),
-            variable=self._league_var, width=210,
+            ctrl, values=_league_opts,
+            variable=self._league_var, width=220,
             font=ctk.CTkFont(size=12),
         ).pack(side="left", padx=(8, 16))
 
@@ -217,6 +227,7 @@ class PregameFrame(ctk.CTkFrame):
         t.start()
 
     def _worker(self, league_key: str):
+        import time as _time
         try:
             from scrapers.odds_api import (get_odds, get_pinnacle_no_vig_probs,
                                            get_pinnacle_no_vig_totals,
@@ -224,110 +235,149 @@ class PregameFrame(ctk.CTkFrame):
             from models.value_calculator import compare_bookmakers, kelly_criterion
             from models.live_targets import classify, score_targets
 
-            sport_key = SPORT_KEYS.get(league_key, "soccer_epl")
-            events    = get_odds(sport_key, markets=["h2h", "totals", "totals_h1"])
-            bankroll  = float(os.getenv("BANKROLL", "1000"))
+            bankroll = float(os.getenv("BANKROLL", "1000"))
+            scan_all = (league_key == "ALL LEAGUES")
+            # ALL LEAGUES: skip totals_h1 to save 1 credit per league
+            markets  = ["h2h", "totals"] if scan_all else ["h2h", "totals", "totals_h1"]
             rows, value_rows, all_targets = [], [], []
 
-            for ev in events:
-                p_1x2  = get_pinnacle_no_vig_probs(ev)
-                p_ou   = get_pinnacle_no_vig_totals(ev, 2.5)
-                p_ht   = get_pinnacle_no_vig_ht_totals(ev, 0.5)
-                p_ht15 = get_pinnacle_no_vig_ht_totals(ev, 1.5)
+            # ── Inner helper: process one league's events ─────────────────
+            def _process_league(lkey, sport_key_inner):
+                _rows, _vrows, _tgts = [], [], []
+                try:
+                    events = get_odds(sport_key_inner, markets=markets)
+                except Exception:
+                    return _rows, _vrows, _tgts
 
-                # checks: (display_name, prob, market_key, side, point_str | None)
-                checks = []
-                if p_ou:
-                    _pt = str(p_ou["point"]).replace(".", "_")
-                    checks += [
-                        ("Over 2.5",  p_ou["over_prob"],  "totals", "over",  _pt),
-                        ("Under 2.5", p_ou["under_prob"], "totals", "under", _pt),
-                    ]
-                if p_1x2:
-                    checks += [
-                        ("Home Win", p_1x2["home"], "1x2", "home", None),
-                        ("Draw",     p_1x2["draw"], "1x2", "draw", None),
-                        ("Away Win", p_1x2["away"], "1x2", "away", None),
-                    ]
-                if p_ht:
-                    _ht_pt = str(p_ht["point"]).replace(".", "_")
-                    checks += [
-                        ("Over 0.5 HT",  p_ht["over_prob"],  "totals_h1", "over",  _ht_pt),
-                        ("Under 0.5 HT", p_ht["under_prob"], "totals_h1", "under", _ht_pt),
-                    ]
-                if p_ht15:
-                    _ht15_pt = str(p_ht15["point"]).replace(".", "_")
-                    checks += [
-                        ("Over 1.5 HT",  p_ht15["over_prob"],  "totals_h1", "over",  _ht15_pt),
-                        ("Under 1.5 HT", p_ht15["under_prob"], "totals_h1", "under", _ht15_pt),
-                    ]
+                for ev in events:
+                    p_1x2  = get_pinnacle_no_vig_probs(ev)
+                    p_ou   = get_pinnacle_no_vig_totals(ev, 2.5)
+                    p_ht   = None if scan_all else get_pinnacle_no_vig_ht_totals(ev, 0.5)
+                    p_ht15 = None if scan_all else get_pinnacle_no_vig_ht_totals(ev, 1.5)
 
-                has_value_ev = False
-                best_over = best_home = best_away = best_btts = best_ht = None
+                    checks = []
+                    if p_ou:
+                        _pt = str(p_ou["point"]).replace(".", "_")
+                        checks += [("Over 2.5",  p_ou["over_prob"],  "totals", "over",  _pt),
+                                   ("Under 2.5", p_ou["under_prob"], "totals", "under", _pt)]
+                    if p_1x2:
+                        checks += [("Home Win", p_1x2["home"], "1x2", "home", None),
+                                   ("Draw",     p_1x2["draw"], "1x2", "draw", None),
+                                   ("Away Win", p_1x2["away"], "1x2", "away", None)]
+                    if p_ht:
+                        _ht_pt = str(p_ht["point"]).replace(".", "_")
+                        checks += [("Over 0.5 HT",  p_ht["over_prob"],  "totals_h1", "over",  _ht_pt),
+                                   ("Under 0.5 HT", p_ht["under_prob"], "totals_h1", "under", _ht_pt)]
+                    if p_ht15:
+                        _ht15_pt = str(p_ht15["point"]).replace(".", "_")
+                        checks += [("Over 1.5 HT",  p_ht15["over_prob"],  "totals_h1", "over",  _ht15_pt),
+                                   ("Under 1.5 HT", p_ht15["under_prob"], "totals_h1", "under", _ht15_pt)]
 
-                for mkt, prob, mkt_key, side, pt in checks:
-                    bm_odds = {}
+                    has_value_ev = False
+                    best_over = best_home = best_away = best_btts = best_ht = None
+
+                    for mkt, prob, mkt_key, side, pt in checks:
+                        bm_odds = {}
+                        for bm, bd in ev.get("odds", {}).items():
+                            if bm == "pinnacle":
+                                continue
+                            if mkt_key in ("totals", "totals_h1"):
+                                o = bd.get(mkt_key, {}).get(f"{side}_{pt}")
+                            else:
+                                o = (bd.get("1x2") or {}).get(side)
+                            if o:
+                                bm_odds[bm] = o
+                        if not bm_odds:
+                            continue
+                        comps = compare_bookmakers(prob, bm_odds)
+                        best  = comps[0]
+                        kelly = kelly_criterion(prob, best["bookmaker_odds"], bankroll)
+                        row = {
+                            "event": ev, "league": lkey,
+                            "match": f"{ev['home_team']} vs {ev['away_team']}",
+                            "date":  ev["commence"][:10],
+                            "market": mkt, "prob": prob,
+                            "bookmaker": best["bookmaker"],
+                            "odds": best["bookmaker_odds"],
+                            "edge": best["value_edge"],
+                            "kelly": kelly["suggested_bet"],
+                            "is_value": best["is_value_bet"],
+                            "value_result": best, "kelly_result": kelly,
+                        }
+                        _rows.append(row)
+                        if best["is_value_bet"]:
+                            _vrows.append(row)
+                            has_value_ev = True
+
+                        best_mkt = max(bm_odds.values())
+                        if mkt_key == "totals" and side == "over":
+                            best_over = best_mkt
+                        elif mkt_key == "1x2" and side == "home":
+                            best_home = best_mkt
+                        elif mkt_key == "1x2" and side == "away":
+                            best_away = best_mkt
+                        elif mkt_key == "totals_h1" and side == "over" and pt == "0_5":
+                            best_ht = best_mkt
+
                     for bm, bd in ev.get("odds", {}).items():
                         if bm == "pinnacle":
                             continue
-                        if mkt_key in ("totals", "totals_h1"):
-                            o = bd.get(mkt_key, {}).get(f"{side}_{pt}")
-                        else:
-                            o = (bd.get("1x2") or {}).get(side)
-                        if o:
-                            bm_odds[bm] = o
-                    if not bm_odds:
-                        continue
-                    comps = compare_bookmakers(prob, bm_odds)
-                    best  = comps[0]
-                    kelly = kelly_criterion(prob, best["bookmaker_odds"], bankroll)
-                    row = {
-                        "event": ev, "league": league_key,
-                        "match": f"{ev['home_team']} vs {ev['away_team']}",
-                        "date":  ev["commence"][:10],
-                        "market": mkt, "prob": prob,
-                        "bookmaker": best["bookmaker"],
-                        "odds": best["bookmaker_odds"],
-                        "edge": best["value_edge"],
-                        "kelly": kelly["suggested_bet"],
-                        "is_value": best["is_value_bet"],
-                        "value_result": best, "kelly_result": kelly,
-                    }
-                    rows.append(row)
-                    if best["is_value_bet"]:
-                        value_rows.append(row)
-                        has_value_ev = True
+                        b = (bd.get("btts") or {}).get("yes")
+                        if b and (best_btts is None or b > best_btts):
+                            best_btts = b
 
-                    # Track best market odds for live targets classifier
-                    best_mkt = max(bm_odds.values())
-                    if mkt_key == "totals" and side == "over":
-                        best_over = best_mkt
-                    elif mkt_key == "1x2" and side == "home":
-                        best_home = best_mkt
-                    elif mkt_key == "1x2" and side == "away":
-                        best_away = best_mkt
-                    elif mkt_key == "totals_h1" and side == "over" and pt == "0_5":
-                        best_ht = best_mkt
+                    _tgts.extend(classify(
+                        ev, p_1x2, p_ou,
+                        best_over_odds=best_over, best_home_odds=best_home,
+                        best_away_odds=best_away, best_btts_odds=best_btts,
+                        best_ht_odds=best_ht,     p_ht_ou=p_ht,
+                        has_value_bet=has_value_ev,
+                    ))
+                return _rows, _vrows, _tgts
 
-                # Best BTTS odds (separate market, not in checks loop)
-                for bm, bd in ev.get("odds", {}).items():
-                    if bm == "pinnacle":
-                        continue
-                    b = (bd.get("btts") or {}).get("yes")
-                    if b and (best_btts is None or b > best_btts):
-                        best_btts = b
+            # ── Step 1 (ALL LEAGUES): Football-Data.org fixtures pre-fetch ─
+            if scan_all:
+                try:
+                    from scrapers.football_data import COMPETITIONS, get_upcoming_matches
+                    fd_list = list(COMPETITIONS.keys())
+                    n_fd    = len(fd_list)
+                    for fi, comp in enumerate(fd_list):
+                        self.app.q(lambda fi=fi, n=n_fd: self._status.configure(
+                            text=f"Football-Data.org [{fi+1}/{n}] fixtures...",
+                            text_color=C_DIM,
+                        ))
+                        try:
+                            get_upcoming_matches(comp)
+                        except Exception:
+                            pass
+                        if fi < n_fd - 1:
+                            _time.sleep(1)
+                except Exception:
+                    pass
+                # Refresh Greek Super League results cache (uses Odds API key, no extra cost)
+                try:
+                    from scrapers.greek_stats import update_results_cache
+                    update_results_cache()
+                except Exception:
+                    pass
 
-                ev_targets = classify(
-                    ev, p_1x2, p_ou,
-                    best_over_odds=best_over,
-                    best_home_odds=best_home,
-                    best_away_odds=best_away,
-                    best_btts_odds=best_btts,
-                    best_ht_odds=best_ht,
-                    p_ht_ou=p_ht,
-                    has_value_bet=has_value_ev,
-                )
-                all_targets.extend(ev_targets)
+            # ── Step 2: The Odds API scan ─────────────────────────────────
+            items = list(SPORT_KEYS.items()) if scan_all else \
+                    [(league_key, SPORT_KEYS.get(league_key, "soccer_epl"))]
+            total = len(items)
+
+            for idx, (lkey, sport_key) in enumerate(items):
+                if scan_all:
+                    self.app.q(lambda i=idx, k=lkey, n=total: self._status.configure(
+                        text=f"The Odds API [{i+1}/{n}]  {k.replace('_',' ').title()}...",
+                        text_color=C_DIM,
+                    ))
+                r, vr, t = _process_league(lkey, sport_key)
+                rows.extend(r)
+                value_rows.extend(vr)
+                all_targets.extend(t)
+                if scan_all and idx < total - 1:
+                    _time.sleep(1)
 
             all_targets = score_targets(all_targets)
             self.app.q(lambda r=rows, vr=value_rows, t=all_targets: self._done(r, vr, t))
@@ -340,20 +390,25 @@ class PregameFrame(ctk.CTkFrame):
         self._scanning = False
         self._scan_btn.configure(state="normal", text="🔍  SCAN")
         self._results = value_rows
-        cnt = len(value_rows)
+        cnt          = len(value_rows)
+        n_leagues    = len(set(r["league"] for r in rows)) if rows else 0
+        multi_league = n_leagues > 1
+        league_info  = f"  |  {n_leagues} leagues" if multi_league else ""
         self._status.configure(
-            text=f"✓ {cnt} value bets  |  {len(rows)} αγορές σαρώθηκαν",
+            text=f"✓ {cnt} value bets  |  {len(rows)} αγορές{league_info}",
             text_color=C_GREEN if cnt else C_DIM,
         )
         if cnt:
             self._track_btn.configure(state="normal")
 
-        # Sort: value bets πρώτα, μετά κατά edge
+        # Sort: value bets πρώτα, μετά κατά edge descending
         rows.sort(key=lambda x: (not x["is_value"], -x["edge"]))
         for i, r in enumerate(rows):
-            tag  = "value" if r["is_value"] else ("alt" if i % 2 else "")
+            tag   = "value" if r["is_value"] else ("alt" if i % 2 else "")
+            abbr  = LEAGUE_ABBREV.get(r["league"], r["league"][:4].upper())
+            match = f"[{abbr}]  {r['match']}" if multi_league else r["match"]
             self._tree.insert("", "end", tags=(tag,), values=(
-                r["match"], r["date"], r["market"],
+                match, r["date"], r["market"],
                 f"{r['prob']:.1%}", r["bookmaker"], r["odds"],
                 f"{r['edge']*100:+.1f}%",
                 f"€{r['kelly']:.2f}" if r["is_value"] else "—",
@@ -469,15 +524,19 @@ class LiveFrame(ctk.CTkFrame):
 
         # ── Live table ────────────────────────────────────────────────────────
         cols = {
-            "time":     ("Ώρα",          70, "center"),
-            "match":    ("Αγώνας",      240, "w"),
-            "score":    ("Σκορ",         65, "center"),
-            "minute":   ("Λεπτό",        65, "center"),
-            "live_p":   ("Live O2.5",   100, "center"),
-            "bookmaker":("Bookmaker",   130, "center"),
-            "odds":     ("Odds",         75, "center"),
-            "edge":     ("Edge",         75, "center"),
-            "status":   ("Status",       90, "center"),
+            "time":      ("Ώρα",          58, "center"),
+            "match":     ("Αγώνας",      185, "w"),
+            "score":     ("Σκορ",         50, "center"),
+            "minute":    ("Λεπτό",        50, "center"),
+            "market":    ("Αγορά",        82, "center"),
+            "live_p":    ("Live Prob",    78, "center"),
+            "shots":     ("SoT",          60, "center"),
+            "corners":   ("Corners",      68, "center"),
+            "poss":      ("Poss%",        60, "center"),
+            "bookmaker": ("Bookmaker",   110, "center"),
+            "odds":      ("Odds",         62, "center"),
+            "edge":      ("Edge",         62, "center"),
+            "status":    ("Status",      105, "center"),
         }
         tbl = ctk.CTkFrame(self, fg_color=C_TREE_BG, corner_radius=8)
         tbl.pack(fill="both", expand=True, padx=20, pady=(0, 16))
@@ -485,8 +544,11 @@ class LiveFrame(ctk.CTkFrame):
         self._tree, sb = _make_tree(tbl, cols, "LV")
         self._tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
         sb.pack(side="right", fill="y", pady=6, padx=(0, 4))
-        self._tree.tag_configure("ht_value", foreground="#fdcb6e",
-                                  font=("Segoe UI", 11, "bold"), background="#1a0f00")
+        # HIGH CONF! = magenta row (edge + shots on target >= 3)
+        self._tree.tag_configure("highconf",
+                                  foreground="#e056fd",
+                                  font=("Segoe UI", 11, "bold"),
+                                  background="#1a0026")
 
         # ── Log / alerts area ─────────────────────────────────────────────────
         self._log = ctk.CTkTextbox(self, height=110, corner_radius=8,
@@ -541,10 +603,10 @@ class LiveFrame(ctk.CTkFrame):
             self._stop_evt.wait(interval)
 
     def _update_live(self, results: list, iteration: int):
-        # Κρατάμε value alerts στη λίστα (δεν σβήνονται μεταξύ scans)
+        # Keep value rows pinned; remove non-value rows between scans
         for item in self._tree.get_children():
             vals = self._tree.item(item, "values")
-            if len(vals) >= 9 and vals[8] not in ("VALUE!", "⚡ HT!"):
+            if len(vals) >= 13 and vals[12] not in ("VALUE!", "HIGH CONF!"):
                 self._tree.delete(item)
 
         now_str = datetime.now().strftime("%H:%M")
@@ -555,53 +617,90 @@ class LiveFrame(ctk.CTkFrame):
 
         self._log_msg(f"→ {len(results)} in-play αγώνες:")
         for r in results:
-            score    = f"{r['home_score']}-{r['away_score']}"
-            minute   = f"{r.get('minute', '?')}'"
-            live_p   = f"{r['live_over_prob']:.1%}" if r.get("live_over_prob") else "—"
-            vbets    = r.get("value_bets", [])
-            ht_vbets = r.get("ht_value_bets", [])
+            match_name = f"{r['home_team']} vs {r['away_team']}"
+            score      = f"{r['home_score']}-{r['away_score']}"
+            minute_n   = r.get("minute", 0)
+            minute_str = f"{minute_n}'"
 
-            # ── HT value alert (highest priority display) ──────────────────
-            if ht_vbets:
-                ht_p = f"{r['ht_over_prob']:.1%}" if r.get("ht_over_prob") else "—"
-                for vb in ht_vbets:
-                    self._tree.insert("", 0, tags=("ht_value",), values=(
-                        now_str,
-                        f"{r['home_team']} vs {r['away_team']}",
-                        score, minute, ht_p,
-                        vb["bookmaker"], vb["bookmaker_odds"],
-                        f"{vb['value_edge']*100:+.1f}%",
-                        "⚡ HT!",
-                    ))
-                    self._log_msg(
-                        f"  ⚡ HT VALUE! {r['home_team']} vs {r['away_team']} "
-                        f"[{minute}] Over 0.5 HT @{vb['bookmaker_odds']} "
-                        f"({vb['bookmaker']}) edge={vb['value_edge_pct']}"
-                    )
+            # Live stats (populated only when value was found)
+            stats  = r.get("live_stats") or {}
+            shots  = stats.get("shots_str", "—")
+            corners = stats.get("corners_str", "—")
+            poss   = stats.get("possession_str", "—")
+            sot    = stats.get("shots_ot_total", 0)
 
-            # ── Full-game Over 2.5 value alert ─────────────────────────────
+            def _status(is_value: bool) -> str:
+                if not is_value:
+                    return "—"
+                return "HIGH CONF!" if sot >= 3 else "VALUE!"
+
+            def _tag(is_value: bool) -> str:
+                if not is_value:
+                    return "alt"
+                return "highconf" if sot >= 3 else "value"
+
+            # Helper: build one row tuple (13 values)
+            def _row(now, name, sc, mn, mkt, prob, sh, cor, ps, bm, odds, edge, status):
+                return (now, name, sc, mn, mkt, prob, sh, cor, ps, bm, odds, edge, status)
+
+            # ── Row 1: Over 2.5 ───────────────────────────────────────────
+            live_p = f"{r['live_over_prob']:.1%}" if r.get("live_over_prob") else "—"
+            vbets  = r.get("value_bets", [])
             if vbets:
                 for vb in vbets:
-                    self._tree.insert("", 0, tags=("value",), values=(
-                        now_str,
-                        f"{r['home_team']} vs {r['away_team']}",
-                        score, minute, live_p,
+                    st  = _status(True)
+                    tag = _tag(True)
+                    vals = _row(
+                        now_str, match_name, score, minute_str,
+                        "Over 2.5", live_p, shots, corners, poss,
                         vb["bookmaker"], vb["bookmaker_odds"],
-                        f"{vb['value_edge']*100:+.1f}%",
-                        "VALUE!",
-                    ))
-                    self._log_msg(
-                        f"  🔔 VALUE: {r['home_team']} vs {r['away_team']} "
-                        f"[{minute}] Over 2.5 @{vb['bookmaker_odds']} "
-                        f"({vb['bookmaker']}) edge={vb['value_edge_pct']}"
+                        f"{vb['value_edge']*100:+.1f}%", st,
                     )
-
-            if not vbets and not ht_vbets:
-                self._tree.insert("", "end", tags=("alt",), values=(
-                    now_str,
-                    f"{r['home_team']} vs {r['away_team']}",
-                    score, minute, live_p, "—", "—", "—", "—",
+                    self._tree.insert("", 0, tags=(tag,), values=vals)
+                    self._log_msg(
+                        f"  {'★ HIGH CONF' if st == 'HIGH CONF!' else '🔔 VALUE'}: "
+                        f"{match_name} [{minute_str}] Over 2.5 @{vb['bookmaker_odds']} "
+                        f"({vb['bookmaker']}) edge={vb['value_edge_pct']}"
+                        + (f" | SoT={shots}" if stats else "")
+                    )
+            else:
+                self._tree.insert("", "end", tags=("alt",), values=_row(
+                    now_str, match_name, score, minute_str,
+                    "Over 2.5", live_p, "—", "—", "—", "—", "—", "—", "—",
                 ))
+
+            # ── Rows 2-3: HT markets (1st half only) ──────────────────────
+            if minute_n <= 45:
+                for ht_label, prob_key, bets_key in [
+                    ("O0.5 HT", "ht_05_prob", "ht_05_bets"),
+                    ("O1.5 HT", "ht_15_prob", "ht_15_bets"),
+                ]:
+                    ht_prob  = r.get(prob_key)
+                    ht_p     = f"{ht_prob:.1%}" if ht_prob is not None else "—"
+                    ht_bets  = r.get(bets_key, [])
+                    sub_name = f"  ↳ {ht_label}"
+                    if ht_bets:
+                        for vb in ht_bets:
+                            st  = _status(True)
+                            tag = _tag(True)
+                            vals = _row(
+                                "", sub_name, "", "",
+                                ht_label, ht_p, shots, corners, poss,
+                                vb["bookmaker"], vb["bookmaker_odds"],
+                                f"{vb['value_edge']*100:+.1f}%", st,
+                            )
+                            self._tree.insert("", 0, tags=(tag,), values=vals)
+                            self._log_msg(
+                                f"  {'★ HIGH CONF' if st == 'HIGH CONF!' else '⚡ HT VALUE'}: "
+                                f"{match_name} [{minute_str}] {ht_label} @{vb['bookmaker_odds']} "
+                                f"({vb['bookmaker']}) edge={vb['value_edge_pct']}"
+                                + (f" | SoT={shots}" if stats else "")
+                            )
+                    else:
+                        self._tree.insert("", "end", tags=("alt",), values=_row(
+                            "", sub_name, "", "",
+                            ht_label, ht_p, "—", "—", "—", "—", "—", "—", "—",
+                        ))
 
     def _log_msg(self, msg: str):
         self._log.configure(state="normal")

@@ -121,4 +121,4 @@ def restart_app():
     exe  = sys.executable
     args = sys.argv[:]
     subprocess.Popen([exe] + args)
-    sys.exit(0)
+    os._exit(0)   # hard-kill entire process from any thread; sys.exit only kills the calling thread

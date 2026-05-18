@@ -28,8 +28,8 @@
     {
       "path": "updater.py",
       "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/updater.py",
-      "sha256": "b933955076b815c0042fdd03f545b3c3e850e30cd6d6e052a0bf1d5340e733f4",
-      "size": 3979
+      "sha256": "fe6386f92461482dc191785a3f870fcb5e4b741a853bd7a47fe8508d76d27ac9",
+      "size": 4064
     },
     {
       "path": "version.txt",
@@ -165,5 +165,5 @@
     }
   ],
   "total_files": 27,
-  "total_bytes": 270768
+  "total_bytes": 270853
 }

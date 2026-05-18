@@ -100,7 +100,7 @@ def main():
     )
 
     total_kb = manifest["total_bytes"] / 1024
-    print(f"✓ Generated update_manifest.json")
+    print(f"OK Generated update_manifest.json")
     print(f"  Version : {version}")
     print(f"  Files   : {len(files)}")
     print(f"  Size    : {total_kb:.1f} KB  (this is how much users download per update)")

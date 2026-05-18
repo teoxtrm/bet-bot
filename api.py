@@ -437,10 +437,10 @@ def _run_pregame_scan(username: str, league_key: str):
 
         bankroll  = float(env.get("BANKROLL", "1000"))
         markets   = ["h2h", "totals", "totals_h1"]
+        today_str = date.today().isoformat()
         now_utc   = datetime.utcnow()
-        # Show events in the next 24 hours (handles midnight UTC boundary)
         from datetime import timedelta
-        cutoff_from = now_utc - timedelta(hours=2)   # include recently started
+        cutoff_from = now_utc - timedelta(hours=2)
         cutoff_to   = now_utc + timedelta(hours=24)
 
         _TIER_OPTS  = {"ALL LEAGUES", "TIER 1 ONLY", "TIER 2 ONLY", "TIER 3 ONLY"}

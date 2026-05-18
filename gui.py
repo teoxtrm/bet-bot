@@ -147,8 +147,8 @@ class PregameFrame(ctk.CTkFrame):
                      font=ctk.CTkFont(size=13)).pack(side="left")
 
         from scrapers.odds_api import SPORT_KEYS
-        _league_opts = ["ALL LEAGUES"] + list(SPORT_KEYS.keys())
-        self._league_var = ctk.StringVar(value="ALL LEAGUES")
+        _league_opts = ["ALL LEAGUES", "TIER 1 ONLY", "TIER 2 ONLY", "TIER 3 ONLY"] + list(SPORT_KEYS.keys())
+        self._league_var = ctk.StringVar(value="TIER 1 ONLY")
         ctk.CTkComboBox(
             ctrl, values=_league_opts,
             variable=self._league_var, width=220,
@@ -265,7 +265,15 @@ class PregameFrame(ctk.CTkFrame):
             from models.live_targets import classify, score_targets
 
             bankroll = float(os.getenv("BANKROLL", "1000"))
-            scan_all = (league_key == "ALL LEAGUES")
+            _TIER_OPTS = {"ALL LEAGUES", "TIER 1 ONLY", "TIER 2 ONLY", "TIER 3 ONLY"}
+            scan_all   = league_key in _TIER_OPTS
+            tier_filter = None
+            if league_key == "TIER 1 ONLY":
+                tier_filter = 1
+            elif league_key == "TIER 2 ONLY":
+                tier_filter = 2
+            elif league_key == "TIER 3 ONLY":
+                tier_filter = 3
             # Always include totals_h1 — adding markets to a single request costs 0 extra credits
             markets  = ["h2h", "totals", "totals_h1"]
             rows, value_rows, all_targets = [], [], []
@@ -388,8 +396,8 @@ class PregameFrame(ctk.CTkFrame):
                     ))
                 return _rows, _vrows, _tgts, _evdata
 
-            # ── Step 1 (ALL LEAGUES): Football-Data.org fixtures pre-fetch ─
-            if scan_all:
+            # ── Step 1: Football-Data.org fixtures pre-fetch (Tier 1 / ALL only) ─
+            if scan_all and tier_filter in (None, 1):
                 try:
                     from scrapers.football_data import COMPETITIONS, get_upcoming_matches
                     fd_list = list(COMPETITIONS.keys())
@@ -415,12 +423,17 @@ class PregameFrame(ctk.CTkFrame):
                     pass
 
             # ── Step 2: The Odds API scan ─────────────────────────────────
-            items = list(SPORT_KEYS.items()) if scan_all else \
-                    [(league_key, SPORT_KEYS.get(league_key, "soccer_epl"))]
+            if tier_filter is not None:
+                items = [(lk, sk) for lk, sk in SPORT_KEYS.items()
+                         if _OKL.get(sk, {}).get("tier", 2) == tier_filter]
+            elif scan_all:
+                items = list(SPORT_KEYS.items())
+            else:
+                items = [(league_key, SPORT_KEYS.get(league_key, "soccer_epl"))]
             total = len(items)
 
             # ── Pre-filter: skip leagues with no games today (0 credits) ──
-            if scan_all:
+            if scan_all:  # covers both ALL LEAGUES and TIER 1 ONLY
                 from scrapers.odds_api import get_event_count_today
                 self.app.q(lambda: self._status.configure(
                     text="Ελέγχω ποια leagues παίζουν σήμερα (0 credits)...",
@@ -442,7 +455,23 @@ class PregameFrame(ctk.CTkFrame):
                     text_color=C_DIM,
                 ))
 
+            from utils.scan_cache import load_league_scan, save_league_scan
+            from models.live_targets import LiveTarget as _LiveTarget
+
             for idx, (lkey, sport_key) in enumerate(items):
+                # ── Check per-league cache first (saves credits) ──────────
+                cached_league = load_league_scan(sport_key)
+                if cached_league:
+                    print(f"[Scan] {lkey}: cached today ✓ (0 credits)")
+                    _cr = cached_league["rows"]
+                    _ct = [_LiveTarget(**t) for t in cached_league.get("targets", [])]
+                    _ce = cached_league.get("events_data", [])
+                    rows.extend(_cr)
+                    value_rows.extend([r for r in _cr if r.get("is_value")])
+                    all_targets.extend(_ct)
+                    events_data.extend(_ce)
+                    continue
+
                 if scan_all:
                     self.app.q(lambda i=idx, k=lkey, n=total: self._status.configure(
                         text=f"The Odds API [{i+1}/{n}]  {k.replace('_',' ').title()}...",
@@ -453,6 +482,7 @@ class PregameFrame(ctk.CTkFrame):
                 value_rows.extend(vr)
                 all_targets.extend(t)
                 events_data.extend(evd)
+                save_league_scan(sport_key, r, evd, t)
                 if scan_all and idx < total - 1:
                     _time.sleep(1)
 
@@ -510,7 +540,9 @@ class PregameFrame(ctk.CTkFrame):
             if "tipster" in self.app.frames:
                 try:
                     self.app.frames["tipster"].update_picks(tipster_picks)
-                    self.app.frames["tipster"].update_watchlist(watchlist_games)
+                    # Only overwrite watchlist if we actually got new games
+                    if watchlist_games:
+                        self.app.frames["tipster"].update_watchlist(watchlist_games)
                 except Exception as e:
                     _log_error("TipsterFrame.update", e)
         try:
@@ -1376,7 +1408,11 @@ class App(ctk.CTk):
     def _drain_queue(self):
         try:
             while True:
-                self._queue.get_nowait()()
+                fn = self._queue.get_nowait()
+                try:
+                    fn()
+                except Exception as e:
+                    _log_error("drain_queue callback", e)
         except queue.Empty:
             pass
         self.after(100, self._drain_queue)
@@ -1560,15 +1596,15 @@ class App(ctk.CTk):
             from scrapers.odds_api import get_credits
             c   = get_credits()
             rem = c.get("remaining")
-            used = c.get("used")
             if rem is not None:
                 try:
                     rem_i = int(rem)
-                    col_o = C_GREEN if rem_i > 100 else (C_YELLOW if rem_i > 30 else C_RED)
+                    col_o = C_GREEN if rem_i > 200 else (C_YELLOW if rem_i > 50 else C_RED)
+                    warn  = "  ⚠ LOW" if rem_i <= 50 else ""
                 except (ValueError, TypeError):
-                    rem_i, col_o = rem, C_DIM
+                    rem_i, col_o, warn = rem, C_DIM, ""
                 self._sb_odds_api.configure(
-                    text=f"Odds API: {rem_i} / 500",
+                    text=f"Odds API: {rem_i} / 500{warn}",
                     text_color=col_o,
                 )
         except Exception:

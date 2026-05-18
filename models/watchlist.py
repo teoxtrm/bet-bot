@@ -104,6 +104,32 @@ def score_live_potential(
     return round(min(1.0, score), 4)
 
 
+def _best_bm_over25(ev: dict) -> float | None:
+    """
+    Estimate P(Over 2.5) from best available bookmaker when Pinnacle has no totals.
+    Uses highest (most generous) over odds → lowest implied prob → conservative estimate.
+    """
+    best_odds = None
+    for bm, bd in ev.get("odds", {}).items():
+        if bm == "pinnacle":
+            continue
+        totals = bd.get("totals") or {}
+        o = totals.get("over_2_5")
+        if o is None:
+            # Try closest available point
+            pts = [float(k.replace("over_", "").replace("_", "."))
+                   for k in totals if k.startswith("over_")]
+            if pts:
+                closest = min(pts, key=lambda x: abs(x - 2.5))
+                if abs(closest - 2.5) <= 0.5:   # only accept 2.0 or 3.0 as fallback
+                    o = totals.get(f"over_{str(closest).replace('.', '_')}")
+        if o and (best_odds is None or o > best_odds):
+            best_odds = o
+    if best_odds is None:
+        return None
+    return round(1 / best_odds, 4)
+
+
 def generate_watchlist(
     events_data: list[dict],
     max_games:   int = 6,
@@ -122,10 +148,14 @@ def generate_watchlist(
         league = item.get("league", "")
         tier   = item.get("tier", 2)
 
-        if not p_ou:
-            continue
-
-        over_25 = p_ou.get("over_prob", 0)
+        if p_ou:
+            over_25 = p_ou.get("over_prob", 0)
+        else:
+            over_25 = _best_bm_over25(ev)
+            if over_25 is None:
+                match_name = f"{ev.get('home_team','')} vs {ev.get('away_team','')}"
+                print(f"[Watchlist] SKIP {match_name} ({league}) — no totals data")
+                continue
         ht_05   = p_ht.get("over_prob")   if p_ht   else None
         ht_15   = p_ht15.get("over_prob") if p_ht15 else None
 
@@ -145,4 +175,7 @@ def generate_watchlist(
         ))
 
     games.sort(key=lambda g: -g.live_score)
-    return games[:max_games]
+    top = games[:max_games]
+    print(f"[Watchlist] {len(events_data)} events → {len(games)} scored → top {len(top)}: "
+          + ", ".join(f"{g.match[:20]} ({g.live_score:.2f})" for g in top))
+    return top

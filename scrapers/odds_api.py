@@ -100,29 +100,35 @@ ALL_BOOKS    = SHARP_BOOKS + SOFT_BOOKS
 # Sport keys confirmed to NOT support totals_h1 — populated at runtime, avoids wasted 422 calls
 _ht_unsupported: set[str] = set()
 
+# Sport keys that returned 404 — don't exist on Odds API, skip forever
+_invalid_sport_keys: set[str] = set()
 
-def _load_ht_unsupported():
+
+def _load_key_cache():
     try:
         saved = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
         for k in saved.get("ht_unsupported", []):
             _ht_unsupported.add(k)
+        for k in saved.get("invalid_sport_keys", []):
+            _invalid_sport_keys.add(k)
     except Exception:
         pass
 
 
-def _persist_ht_unsupported():
+def _persist_key_cache():
     try:
         _CREDITS_FILE.parent.mkdir(exist_ok=True)
         existing = {}
         if _CREDITS_FILE.exists():
             existing = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
-        existing["ht_unsupported"] = sorted(_ht_unsupported)
+        existing["ht_unsupported"]    = sorted(_ht_unsupported)
+        existing["invalid_sport_keys"] = sorted(_invalid_sport_keys)
         _CREDITS_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
     except Exception:
         pass
 
 
-_load_ht_unsupported()
+_load_key_cache()
 
 
 def _get(path: str, params: dict, track_credits: bool = True) -> list | dict | None:
@@ -144,9 +150,12 @@ def _get(path: str, params: dict, track_credits: bool = True) -> list | dict | N
             return r.json()
         elif r.status_code == 401:
             print("[OddsAPI] Λάθος API key.")
+        elif r.status_code == 404:
+            print(f"[OddsAPI] 404 — άγνωστο sport key: {path}")
+            return False   # permanent — caller should stop retrying this key
         elif r.status_code == 422:
             print(f"[OddsAPI] Μη υποστηριζόμενη παράμετρος: {r.json().get('message','')}")
-            return False   # distinct from None so callers can retry with fewer markets
+            return False   # permanent — caller should retry with fewer markets
         else:
             print(f"[OddsAPI] Error {r.status_code}: {r.text[:200]}")
     except requests.RequestException as e:
@@ -166,10 +175,22 @@ def get_event_count_today(sport_key: str) -> int:
     Check how many events are scheduled TODAY for a sport.
     Uses /events/ endpoint — costs 0 API credits (no bookmaker data returned).
     Call this BEFORE get_odds() to skip leagues with no games today.
+    Unknown sport keys (404) are cached and skipped on future calls.
     """
+    if sport_key in _invalid_sport_keys:
+        return 0
+
     from datetime import date
     today = date.today().isoformat()
     data  = _get(f"/sports/{sport_key}/events/", {"dateFormat": "iso"}, track_credits=False)
+
+    if data is False:
+        # 404 — this sport key doesn't exist on the Odds API
+        _invalid_sport_keys.add(sport_key)
+        _persist_key_cache()
+        print(f"[OddsAPI] {sport_key} — άγνωστο key, αφαιρέθηκε από future scans")
+        return 0
+
     if not data:
         return 0
     return sum(1 for e in data if e.get("commence_time", "")[:10] == today)
@@ -208,7 +229,7 @@ def get_odds(sport_key: str, markets: list = None, bookmakers: list = None) -> l
     if raw is False and "totals_h1" in markets:
         # First time we learn this league doesn't support totals_h1 — remember it
         _ht_unsupported.add(sport_key)
-        _persist_ht_unsupported()
+        _persist_key_cache()
         params["markets"] = ",".join(m for m in markets if m != "totals_h1")
         print(f"[OddsAPI] {sport_key} added to no-HT cache, retry without totals_h1")
         raw = _get(f"/sports/{sport_key}/odds/", params)

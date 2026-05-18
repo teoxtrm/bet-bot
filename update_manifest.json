@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "files": [
     {
       "path": "config.py",
@@ -10,8 +10,8 @@
     {
       "path": "gui.py",
       "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/gui.py",
-      "sha256": "a4d98f344d5b8b0080d0592b9618dbb872984df03678bb21e58e4c87f2a3083f",
-      "size": 83682
+      "sha256": "cf4490d1803e5829cdfcfeaad2387d7ed835dc1d5b340ae23c66eec19270596f",
+      "size": 84045
     },
     {
       "path": "main.py",
@@ -34,7 +34,7 @@
     {
       "path": "version.txt",
       "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/version.txt",
-      "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
+      "sha256": "44e161e4495cac2cf7858043e9e6418e9579f0ddcfae826f9a372622968ce066",
       "size": 6
     },
     {
@@ -165,5 +165,5 @@
     }
   ],
   "total_files": 27,
-  "total_bytes": 270405
+  "total_bytes": 270768
 }

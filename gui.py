@@ -1392,9 +1392,18 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Value Betting Bot  v0.5")
-        self.geometry("1280x780")
         self.minsize(1050, 650)
         self.configure(fg_color=C_BG)
+        # Center on screen
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        w, h = min(1280, sw - 40), min(780, sh - 80)
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.lift()
+        self.focus_force()
 
         self._queue = queue.Queue()
         self._build()
@@ -1644,6 +1653,7 @@ if __name__ == "__main__":
     from utils.database import init_db
     init_db()
     app = App()
+    app.update()   # settle geometry before wizard reads winfo_x/y
 
     # ── First-run setup wizard (runs before main window is usable) ────────────
     try:

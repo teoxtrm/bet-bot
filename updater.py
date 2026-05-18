@@ -46,6 +46,13 @@ def get_remote_version(timeout: int = 5) -> str | None:
         return None
 
 
+def _ver(v: str) -> tuple:
+    try:
+        return tuple(int(x) for x in v.strip().split("."))
+    except Exception:
+        return (0, 0, 0)
+
+
 def check_for_update() -> tuple[bool, str, str]:
     """
     Returns (update_available, local_version, remote_version).
@@ -53,7 +60,7 @@ def check_for_update() -> tuple[bool, str, str]:
     """
     local  = get_local_version()
     remote = get_remote_version()
-    if remote and remote != local:
+    if remote and _ver(remote) > _ver(local):
         return True, local, remote
     return False, local, remote or local
 

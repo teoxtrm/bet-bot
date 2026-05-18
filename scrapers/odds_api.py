@@ -180,9 +180,12 @@ def get_event_count_today(sport_key: str) -> int:
     if sport_key in _invalid_sport_keys:
         return 0
 
-    from datetime import date
-    today = date.today().isoformat()
-    data  = _get(f"/sports/{sport_key}/events/", {"dateFormat": "iso"}, track_credits=False)
+    from datetime import date, timedelta, datetime as _dt
+    now_utc  = _dt.utcnow()
+    win_from = now_utc - timedelta(hours=2)
+    win_to   = now_utc + timedelta(hours=26)
+
+    data = _get(f"/sports/{sport_key}/events/", {"dateFormat": "iso"}, track_credits=False)
 
     if data is False:
         # 404 — this sport key doesn't exist on the Odds API
@@ -193,7 +196,17 @@ def get_event_count_today(sport_key: str) -> int:
 
     if not data:
         return 0
-    return sum(1 for e in data if e.get("commence_time", "")[:10] == today)
+
+    count = 0
+    for e in data:
+        ct = e.get("commence_time", "")
+        try:
+            dt = _dt.fromisoformat(ct.replace("Z", "+00:00")).replace(tzinfo=None)
+            if win_from <= dt <= win_to:
+                count += 1
+        except Exception:
+            pass
+    return count
 
 
 def get_odds(sport_key: str, markets: list = None, bookmakers: list = None) -> list:

@@ -1564,6 +1564,9 @@ class App(ctk.CTk):
                     f"€{r.get('kelly',0):.2f}" if r.get("is_value") else "—",
                 ))
             cnt = len(value_rows)
+            pg._results = value_rows   # enable tracking from cached scan
+            if cnt:
+                pg._track_btn.configure(state="normal")
             pg._status.configure(
                 text=f"✓ {cnt} value bets (cached)  |  {len(rows)} αγορές",
                 text_color=C_GREEN if cnt else C_DIM,
@@ -1741,22 +1744,29 @@ if __name__ == "__main__":
                 file_lbl.pack()
 
                 def _progress_cb(cur, total, fname):
-                    progress.set(cur / total)
-                    file_lbl.configure(text=fname)
-                    prog_win.update()
+                    # Schedule on main thread — tkinter is not thread-safe
+                    app.after(0, lambda c=cur, t=total, f=fname: (
+                        progress.set(c / t),
+                        file_lbl.configure(text=f),
+                    ))
 
                 import threading
                 def _do_download():
                     ok, err = download_update(progress_cb=_progress_cb)
-                    prog_win.destroy()
                     if ok:
-                        messagebox.showinfo("Update Complete",
-                                            f"Updated to v{remote_ver}.\nBetBot will now restart.")
-                        restart_app()
+                        def _on_ok():
+                            prog_win.destroy()
+                            messagebox.showinfo("Update Complete",
+                                                f"Updated to v{remote_ver}.\nBetBot will now restart.")
+                            restart_app()
+                        app.after(0, _on_ok)
                     else:
-                        messagebox.showerror("Update Failed",
-                                             f"Some files could not be updated:\n{err}\n\n"
-                                             f"The app will continue with the current version.")
+                        def _on_fail(e=err):
+                            prog_win.destroy()
+                            messagebox.showerror("Update Failed",
+                                                 f"Some files could not be updated:\n{e}\n\n"
+                                                 f"The app will continue with the current version.")
+                        app.after(0, _on_fail)
 
                 threading.Thread(target=_do_download, daemon=True).start()
 

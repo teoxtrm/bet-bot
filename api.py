@@ -121,6 +121,11 @@ def user_has_keys(username: str) -> bool:
     return bool(env.get("ODDS_API_KEY"))
 
 
+def base_ctx(username: str) -> dict:
+    users = _load_users()
+    return {"username": username, "is_admin": bool(users.get(username, {}).get("is_admin"))}
+
+
 # ── Per-user in-memory state ──────────────────────────────────────────────────
 _live_results:  dict = {}   # username → list
 _scan_status:   dict = {}   # username → dict
@@ -236,7 +241,7 @@ async def page_pregame(request: Request, username=Depends(get_current_user)):
     if not user_has_keys(username):
         return RedirectResponse("/settings?first=1")
     return templates.TemplateResponse(request=request, name="pregame.html",
-                                       context={"username": username})
+                                       context=base_ctx(username))
 
 
 @app.get("/live", response_class=HTMLResponse)
@@ -244,19 +249,19 @@ async def page_live(request: Request, username=Depends(get_current_user)):
     if not user_has_keys(username):
         return RedirectResponse("/settings?first=1")
     return templates.TemplateResponse(request=request, name="live.html",
-                                       context={"username": username})
+                                       context=base_ctx(username))
 
 
 @app.get("/tipster", response_class=HTMLResponse)
 async def page_tipster(request: Request, username=Depends(get_current_user)):
     return templates.TemplateResponse(request=request, name="tipster.html",
-                                       context={"username": username})
+                                       context=base_ctx(username))
 
 
 @app.get("/history", response_class=HTMLResponse)
 async def page_history(request: Request, username=Depends(get_current_user)):
     return templates.TemplateResponse(request=request, name="history.html",
-                                       context={"username": username})
+                                       context=base_ctx(username))
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -264,8 +269,7 @@ async def page_settings(request: Request, username=Depends(get_current_user),
                          first: str = ""):
     env = user_env(username)
     return templates.TemplateResponse(request=request, name="settings.html",
-                                       context={"username": username,
-                                                "env": env, "first": first})
+                                       context={**base_ctx(username), "env": env, "first": first})
 
 
 @app.post("/settings")
@@ -294,7 +298,7 @@ async def admin_page(request: Request, username=Depends(get_current_user)):
     if not users.get(username, {}).get("is_admin"):
         raise HTTPException(status_code=403, detail="Forbidden")
     return templates.TemplateResponse(request=request, name="admin.html",
-                                       context={"username": username, "users": users})
+                                       context={**base_ctx(username), "users": users})
 
 
 @app.post("/admin/create-user")

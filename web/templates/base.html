@@ -46,8 +46,10 @@
         ('/tipster',  '🤖', 'Tipster'),
         ('/history',  '📊', 'History'),
         ('/settings', '⚙️', 'Settings'),
-        ('/admin',    '🔐', 'Admin'),
       ] %}
+      {% if is_admin %}
+      {% set nav = nav + [('/admin', '🔐', 'Admin')] %}
+      {% endif %}
       {% for href, icon, label in nav %}
       <a href="{{ href }}"
          class="flex items-center gap-3 px-3 py-2.5 rounded-lg mx-2 transition-colors

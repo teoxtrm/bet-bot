@@ -1,12 +1,12 @@
 [Setup]
 AppName=BetBot
-AppVersion=1.0.3
+AppVersion=1.0.5
 AppPublisher=teoxtrm
 AppSupportURL=https://github.com/teoxtrm/bet-bot
 DefaultDirName={autopf}\BetBot
 DefaultGroupName=BetBot
 OutputDir=.
-OutputBaseFilename=BetBot_Setup_v1.0.3
+OutputBaseFilename=BetBot_Setup_v1.0.5
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

@@ -1,5 +1,5 @@
 {
-  "version": "1.0.3",
+  "version": "1.0.5",
   "files": [
     {
       "path": "config.py",
@@ -12,12 +12,6 @@
       "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/gui.py",
       "sha256": "824c6734b1eaa7733a371848f0928ebc2c5defbb4905d10b046357545d5de06c",
       "size": 84313
-    },
-    {
-      "path": "main.py",
-      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/main.py",
-      "sha256": "124375884965bf55612010d834490aff365c0b9a58eca39a2b782add78c86544",
-      "size": 28351
     },
     {
       "path": "setup_wizard.py",
@@ -34,7 +28,7 @@
     {
       "path": "version.txt",
       "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/version.txt",
-      "sha256": "fc1c281f1d0879bb81d24496eb278296d469a4c7d78565b035a14b51eab620b3",
+      "sha256": "103ebd907c90b2d757fa619a23aef36ab3a20e23f0e5aefb5e1367e08151ebf6",
       "size": 7
     },
     {
@@ -116,40 +110,16 @@
       "size": 17061
     },
     {
-      "path": "scrapers/odds_scraper.py",
-      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/odds_scraper.py",
-      "sha256": "353a06645af3129d4be241944572daaf824c464f7cc6da407538e8b6efe6ec50",
-      "size": 2414
-    },
-    {
-      "path": "scrapers/sofascore.py",
-      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/sofascore.py",
-      "sha256": "6b106ab334edadeb70c8be9f6040c304a7eb23aa3c4efd7e9eebaf8e906277c7",
-      "size": 4484
-    },
-    {
       "path": "utils/__init__.py",
       "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/__init__.py",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "size": 0
     },
     {
-      "path": "utils/dashboard.py",
-      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/dashboard.py",
-      "sha256": "92c2ff4a8de7e2813700a308e7dc507464bfeb1fd51d44b2e83472629201e0c9",
-      "size": 8578
-    },
-    {
       "path": "utils/database.py",
       "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/database.py",
       "sha256": "aee83a37f7556c10ba5d09ec6efda2ad6d256f164ab0e6c6302a79170d6e12b3",
       "size": 14631
-    },
-    {
-      "path": "utils/helpers.py",
-      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/helpers.py",
-      "sha256": "7055fa004bf5fcc83412f8161391504998af5f7d30a3c8fc385c0522737e4eb8",
-      "size": 2837
     },
     {
       "path": "utils/league_map.py",
@@ -164,6 +134,6 @@
       "size": 3775
     }
   ],
-  "total_files": 27,
-  "total_bytes": 271122
+  "total_files": 22,
+  "total_bytes": 224458
 }

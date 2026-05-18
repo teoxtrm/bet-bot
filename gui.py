@@ -8,10 +8,30 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+import traceback
 import queue
 import os
+import pathlib
 from datetime import datetime
 from dotenv import load_dotenv
+
+_ERROR_LOG = pathlib.Path("data/error.log")
+
+
+def _log_error(context: str, exc: Exception):
+    """Write full traceback to data/error.log and print to console."""
+    try:
+        _ERROR_LOG.parent.mkdir(exist_ok=True)
+        entry = (
+            f"\n{'='*60}\n"
+            f"{datetime.now().isoformat()}  [{context}]\n"
+            f"{traceback.format_exc()}"
+        )
+        with _ERROR_LOG.open("a", encoding="utf-8") as f:
+            f.write(entry)
+        print(f"[ERROR] {context}: {exc}")
+    except Exception:
+        pass
 
 load_dotenv()
 
@@ -440,6 +460,7 @@ class PregameFrame(ctk.CTkFrame):
             self.app.q(lambda r=rows, vr=value_rows, t=all_targets, ed=events_data:
                        self._done(r, vr, t, ed))
         except Exception as e:
+            _log_error("PregameScan", e)
             self.app.q(lambda err=str(e): self._error(err))
 
     def _done(self, rows: list, value_rows: list, targets: list, events_data: list = None):
@@ -473,30 +494,30 @@ class PregameFrame(ctk.CTkFrame):
             ))
 
         # ── AI Tipster + Watchlist: generate + display ───────────────────────
-        tipster_picks  = []
+        tipster_picks   = []
         watchlist_games = []
         if events_data:
             try:
                 from models.tipster import generate_picks
                 tipster_picks = generate_picks(events_data)
-            except Exception:
-                pass
+            except Exception as e:
+                _log_error("generate_picks", e)
             try:
                 from models.watchlist import generate_watchlist
                 watchlist_games = generate_watchlist(events_data)
-            except Exception:
-                pass
+            except Exception as e:
+                _log_error("generate_watchlist", e)
             if "tipster" in self.app.frames:
                 try:
                     self.app.frames["tipster"].update_picks(tipster_picks)
                     self.app.frames["tipster"].update_watchlist(watchlist_games)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _log_error("TipsterFrame.update", e)
         try:
             from utils.scan_cache import save_scan
             save_scan(rows, targets, tipster_picks, watchlist_games)
-        except Exception:
-            pass
+        except Exception as e:
+            _log_error("save_scan", e)
 
         # ── Populate Live Targets ─────────────────────────────────────────────
         n = len(targets)
@@ -1511,7 +1532,7 @@ class App(ctk.CTk):
             saved_at = cached.get("saved_at", "")[:16].replace("T", " ")
             print(f"[Cache] Restored scan from {saved_at}")
         except Exception as e:
-            print(f"[Cache] Restore error: {e}")
+            _log_error("RestoreFromCache", e)
 
     def _show(self, name: str):
         self.frames[name].tkraise()

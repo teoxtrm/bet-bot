@@ -86,7 +86,7 @@ echo.
 
 REM ── Step 6: Git commit + push ─────────────────────────────────────────────────
 echo [6/6] Pushing to GitHub...
-git add version.txt update_manifest.json installer\betbot_installer.iss gui.py updater.py setup_wizard.py config.py main.py models\ scrapers\ utils\
+git add -A
 git commit -m "Release v%NEW_VER%"
 git push
 if errorlevel 1 (

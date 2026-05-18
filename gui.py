@@ -1,5 +1,5 @@
 """
-Value Betting Bot — GUI v0.5
+Value Betting Bot — GUI
 Dark Mode με customtkinter
 python gui.py
 """
@@ -16,6 +16,15 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 _ERROR_LOG = pathlib.Path("data/error.log")
+
+def _read_version() -> str:
+    for p in (pathlib.Path(__file__).parent / "version.txt",
+              pathlib.Path("version.txt")):
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip()
+    return "?"
+
+_VERSION = _read_version()
 
 
 def _log_error(context: str, exc: Exception):
@@ -1391,7 +1400,7 @@ class HistoryFrame(ctk.CTkFrame):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Value Betting Bot  v0.5")
+        self.title(f"Value Betting Bot  v{_VERSION}")
         self.minsize(1050, 650)
         self.configure(fg_color=C_BG)
         # Center on screen
@@ -1435,7 +1444,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(sb, text="⚽", font=ctk.CTkFont(size=32)).pack(pady=(24, 4))
         ctk.CTkLabel(sb, text="Value Bot",
                      font=ctk.CTkFont(size=18, weight="bold")).pack()
-        ctk.CTkLabel(sb, text="v0.5  |  free APIs",
+        ctk.CTkLabel(sb, text=f"v{_VERSION}  |  free APIs",
                      font=ctk.CTkFont(size=10), text_color=C_DIM).pack(pady=(2, 20))
 
         ctk.CTkFrame(sb, height=1, fg_color="#2d2d50").pack(fill="x", padx=16, pady=4)

@@ -10,8 +10,8 @@
     {
       "path": "gui.py",
       "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/gui.py",
-      "sha256": "cf4490d1803e5829cdfcfeaad2387d7ed835dc1d5b340ae23c66eec19270596f",
-      "size": 84045
+      "sha256": "824c6734b1eaa7733a371848f0928ebc2c5defbb4905d10b046357545d5de06c",
+      "size": 84313
     },
     {
       "path": "main.py",
@@ -165,5 +165,5 @@
     }
   ],
   "total_files": 27,
-  "total_bytes": 270854
+  "total_bytes": 271122
 }

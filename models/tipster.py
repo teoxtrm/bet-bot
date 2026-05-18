@@ -208,7 +208,7 @@ def _make_combo(
         f"{leg2_label}: {leg2_conf:.0%} @{leg2_odds}",
         f"xG {xg:.1f}",
     ]
-    if draw < 0.17 and "Win" in leg1_label or "1" == leg1_label or "2" == leg1_label:
+    if draw < 0.17 and ("Win" in leg1_label or "1" == leg1_label or "2" == leg1_label):
         signals.append(f"Draw μόνο {draw:.0%}")
 
     return TipsterPick(

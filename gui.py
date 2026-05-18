@@ -761,8 +761,11 @@ class LiveFrame(ctk.CTkFrame):
         self._start_btn.configure(state="disabled")
         self._stop_btn.configure(state="normal")
 
-        auto     = self._auto_var.get()
-        interval = int(self._interval_var.get() or "120")
+        auto = self._auto_var.get()
+        try:
+            interval = int(self._interval_var.get())
+        except (ValueError, TypeError):
+            interval = 120
         mode_lbl = "ALL LEAGUES" if auto else self._sport_var.get().upper()
         self._dot.configure(text=f"⬤  LIVE — {mode_lbl}", text_color=C_GREEN)
 
@@ -821,11 +824,9 @@ class LiveFrame(ctk.CTkFrame):
             self._stop_evt.wait(interval)
 
     def _update_live(self, results: list, iteration: int):
-        # Keep value rows pinned; remove non-value rows between scans
+        # Clear all rows each scan so stale value rows don't persist
         for item in self._tree.get_children():
-            vals = self._tree.item(item, "values")
-            if len(vals) >= 13 and vals[12] not in ("VALUE!", "HIGH CONF!"):
-                self._tree.delete(item)
+            self._tree.delete(item)
 
         now_str = datetime.now().strftime("%H:%M")
 

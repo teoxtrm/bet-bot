@@ -67,7 +67,7 @@ def live_over_probability(
         prob_less = sum((math.exp(-lam) * lam**i) / math.factorial(i) for i in range(int(k)))
         return max(0.0, 1.0 - prob_less)
 
-    live_prob = poisson_at_least(expected_remaining, int(goals_needed))
+    live_prob = poisson_at_least(expected_remaining, math.ceil(goals_needed))
 
     # Blend με pregame prob (60% live, 40% pregame) για σταθερότητα
     blended = (live_prob * 0.6) + (pregame_over_prob * 0.4)

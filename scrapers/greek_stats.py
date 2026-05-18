@@ -67,7 +67,10 @@ def update_results_cache() -> int:
         if len(scores) < 2:
             continue
 
-        score_map = {s["name"]: int(s["score"]) for s in scores}
+        try:
+            score_map = {s["name"]: int(s["score"]) for s in scores}
+        except (ValueError, TypeError, KeyError):
+            continue
         home = event["home_team"]
         away = event["away_team"]
 

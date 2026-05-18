@@ -51,7 +51,10 @@ def get_live_scores(sport_key: str) -> list:
             continue  # δεν έχει ξεκινήσει ακόμα
 
         scores = e.get("scores") or []
-        score_map = {s["name"]: int(s["score"]) for s in scores} if scores else {}
+        try:
+            score_map = {s["name"]: int(s["score"]) for s in scores} if scores else {}
+        except (ValueError, TypeError, KeyError):
+            score_map = {}
 
         live.append({
             "id":         e["id"],

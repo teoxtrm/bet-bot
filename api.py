@@ -397,6 +397,14 @@ async def get_leagues(username=Depends(get_current_user_api)):
     return {"leagues": options}
 
 
+def _in_window(commence: str, from_dt: datetime, to_dt: datetime) -> bool:
+    try:
+        dt = datetime.fromisoformat(commence.replace("Z", "+00:00")).replace(tzinfo=None)
+        return from_dt <= dt <= to_dt
+    except Exception:
+        return False
+
+
 def _run_pregame_scan(username: str, league_key: str):
     udir     = str(user_dir(username))
     db_path  = str(user_db(username))
@@ -429,7 +437,11 @@ def _run_pregame_scan(username: str, league_key: str):
 
         bankroll  = float(env.get("BANKROLL", "1000"))
         markets   = ["h2h", "totals", "totals_h1"]
-        today_str = date.today().isoformat()
+        now_utc   = datetime.utcnow()
+        # Show events in the next 24 hours (handles midnight UTC boundary)
+        from datetime import timedelta
+        cutoff_from = now_utc - timedelta(hours=2)   # include recently started
+        cutoff_to   = now_utc + timedelta(hours=24)
 
         _TIER_OPTS  = {"ALL LEAGUES", "TIER 1 ONLY", "TIER 2 ONLY", "TIER 3 ONLY"}
         scan_all    = league_key in _TIER_OPTS
@@ -443,7 +455,7 @@ def _run_pregame_scan(username: str, league_key: str):
                 events = get_odds(sport_key, markets=markets)
             except Exception:
                 return _rows, _vrows, _tgts, _evdata
-            events = [e for e in events if e.get("commence", "")[:10] == today_str]
+            events = [e for e in events if _in_window(e.get("commence",""), cutoff_from, cutoff_to)]
             for ev in events:
                 p_1x2  = get_pinnacle_no_vig_probs(ev)
                 p_ou   = get_pinnacle_no_vig_totals(ev, 2.5)

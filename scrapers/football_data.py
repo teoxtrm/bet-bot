@@ -5,13 +5,53 @@ Free tier: 100 req/day, χωρίς credit card.
 """
 
 import os
+import json
+import pathlib
 import requests
+from datetime import date
 from dotenv import load_dotenv
 
 load_dotenv()
 
 BASE_URL = "https://api.football-data.org/v4"
 API_KEY  = os.getenv("FOOTBALL_DATA_KEY", "")
+DAILY_LIMIT = 100
+
+# Local counter — persisted to data/api_credits.json, reset each new day
+_CREDITS_FILE = pathlib.Path("data/api_credits.json")
+_requests_used: int = 0
+_counter_date: str  = date.today().isoformat()
+
+
+def _load_fd_counter():
+    global _requests_used, _counter_date
+    try:
+        saved = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
+        fd = saved.get("football_data", {})
+        if fd.get("date") == date.today().isoformat():
+            _requests_used = int(fd.get("used", 0))
+            _counter_date  = fd["date"]
+    except Exception:
+        pass
+
+
+def _persist_fd_counter():
+    try:
+        _CREDITS_FILE.parent.mkdir(exist_ok=True)
+        existing = {}
+        if _CREDITS_FILE.exists():
+            existing = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
+        existing["football_data"] = {"date": date.today().isoformat(), "used": _requests_used}
+        _CREDITS_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def get_requests_used() -> int:
+    return _requests_used
+
+
+_load_fd_counter()
 
 # Competition IDs — free tier διαθέσιμα
 # Greek Super League ΔΕΝ είναι διαθέσιμο στο free tier
@@ -30,11 +70,14 @@ COMPETITIONS = {
 
 
 def _get(path: str, params: dict = None) -> dict | None:
+    global _requests_used
     headers = {"X-Auth-Token": API_KEY} if API_KEY else {}
     try:
         r = requests.get(f"{BASE_URL}{path}", headers=headers, params=params or {}, timeout=15)
         print(f"[FootballData] {r.status_code} | {path}")
         if r.status_code == 200:
+            _requests_used += 1
+            _persist_fd_counter()
             return r.json()
         elif r.status_code == 403:
             if not API_KEY:

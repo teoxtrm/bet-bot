@@ -12,6 +12,8 @@ Free tier: 500 requests/month
 """
 
 import os
+import json
+import pathlib
 import requests
 from dotenv import load_dotenv
 
@@ -20,7 +22,43 @@ load_dotenv()
 BASE_URL = "https://api.the-odds-api.com/v4"
 API_KEY  = os.getenv("ODDS_API_KEY", "")
 
+# ── Credit tracking ───────────────────────────────────────────────────────────
+_CREDITS_FILE = pathlib.Path("data/api_credits.json")
+_credits: dict = {"remaining": None, "used": None}
+
+
+def _load_credits():
+    try:
+        saved = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
+        c = saved.get("odds_api", {})
+        _credits["remaining"] = c.get("remaining")
+        _credits["used"]      = c.get("used")
+    except Exception:
+        pass
+
+
+def _persist_credits():
+    try:
+        _CREDITS_FILE.parent.mkdir(exist_ok=True)
+        existing = {}
+        if _CREDITS_FILE.exists():
+            existing = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
+        existing["odds_api"] = {**_credits}
+        _CREDITS_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def get_credits() -> dict:
+    """Return latest known Odds API credit state."""
+    return dict(_credits)
+
+
+_load_credits()
+
+
 SPORT_KEYS = {
+    # ── Tier 1 — Top European ─────────────────────────────────────────────────
     "premier_league":    "soccer_epl",
     "champions_league":  "soccer_uefa_champs_league",
     "la_liga":           "soccer_spain_la_liga",
@@ -29,10 +67,29 @@ SPORT_KEYS = {
     "ligue_1":           "soccer_france_ligue_one",
     "eredivisie":        "soccer_netherlands_eredivisie",
     "primeira_liga":     "soccer_portugal_primeira_liga",
-    "championship":      "soccer_efl_champ",
-    "super_league":      "soccer_greece_super_league",   # odds μόνο
+    "super_league":      "soccer_greece_super_league",
+    "super_lig":         "soccer_turkey_super_league",
+    "pro_league":        "soccer_belgium_first_div",
+    "scottish_prem":     "soccer_scotland_premiership",
     "europa_league":     "soccer_uefa_europa_league",
     "conference":        "soccer_uefa_europa_conference_league",
+    # ── Tier 2 — Second Divisions ─────────────────────────────────────────────
+    "championship":      "soccer_efl_champ",
+    "league_one":        "soccer_england_league1",
+    "la_liga_2":         "soccer_spain_segunda_division",
+    "bundesliga_2":      "soccer_germany_bundesliga2",
+    "serie_b":           "soccer_italy_serie_b",
+    "ligue_2":           "soccer_france_ligue_two",
+    "allsvenskan":       "soccer_sweden_allsvenskan",
+    "superligaen":       "soccer_denmark_superliga",
+    "eliteserien":       "soccer_norway_eliteserien",
+    "ekstraklasa":       "soccer_poland_ekstraklasa",
+    # ── Tier 3 — Global ───────────────────────────────────────────────────────
+    "brasileirao":       "soccer_brazil_campeonato",
+    "argentina_primera": "soccer_argentina_primera_division",
+    "liga_mx":           "soccer_mexico_ligamx",
+    "mls":               "soccer_usa_mls",
+    "j1_league":         "soccer_japan_j_league",
 }
 
 # Bookmakers που επιστρέφει το API (EU region, free tier)
@@ -41,16 +98,21 @@ SOFT_BOOKS   = ["betsson", "sport888", "williamhill", "onexbet", "betclic_fr", "
 ALL_BOOKS    = SHARP_BOOKS + SOFT_BOOKS
 
 
-def _get(path: str, params: dict) -> list | dict | None:
+def _get(path: str, params: dict, track_credits: bool = True) -> list | dict | None:
     if not API_KEY:
         print("[OddsAPI] Δεν βρέθηκε ODDS_API_KEY στο .env")
         return None
     params["apiKey"] = API_KEY
     try:
         r = requests.get(f"{BASE_URL}{path}", params=params, timeout=15)
-        remaining = r.headers.get("x-requests-remaining", "?")
-        used      = r.headers.get("x-requests-used", "?")
-        print(f"[OddsAPI] {r.status_code} | χρησιμοποιήθηκαν={used} | απομένουν={remaining}/500")
+        remaining = r.headers.get("x-requests-remaining")
+        used      = r.headers.get("x-requests-used")
+        if track_credits and remaining is not None:
+            _credits["remaining"] = remaining
+            _credits["used"]      = used
+            _persist_credits()
+        label = "FREE" if not track_credits else f"απομένουν={remaining}/500"
+        print(f"[OddsAPI] {r.status_code} | {label} | {path.split('/')[-2]}")
         if r.status_code == 200:
             return r.json()
         elif r.status_code == 401:
@@ -69,6 +131,20 @@ def get_available_sports() -> list:
     if not data:
         return []
     return [s for s in data if s.get("group") == "Soccer"]
+
+
+def get_event_count_today(sport_key: str) -> int:
+    """
+    Check how many events are scheduled TODAY for a sport.
+    Uses /events/ endpoint — costs 0 API credits (no bookmaker data returned).
+    Call this BEFORE get_odds() to skip leagues with no games today.
+    """
+    from datetime import date
+    today = date.today().isoformat()
+    data  = _get(f"/sports/{sport_key}/events/", {"dateFormat": "iso"}, track_credits=False)
+    if not data:
+        return 0
+    return sum(1 for e in data if e.get("commence_time", "")[:10] == today)
 
 
 def get_odds(sport_key: str, markets: list = None, bookmakers: list = None) -> list:

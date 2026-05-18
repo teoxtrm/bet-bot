@@ -1,5 +1,5 @@
 """
-Value Betting Bot — GUI v0.4
+Value Betting Bot — GUI v0.5
 Dark Mode με customtkinter
 python gui.py
 """
@@ -33,12 +33,21 @@ C_TREE_BG  = "#141428"
 C_TREE_HDR = "#252540"
 
 LEAGUE_ABBREV = {
-    "premier_league":  "EPL",  "champions_league": "UCL",
-    "la_liga":         "ESP",  "bundesliga":        "GER",
-    "serie_a":         "ITA",  "ligue_1":           "FRA",
-    "eredivisie":      "NED",  "primeira_liga":     "POR",
-    "championship":    "CH",   "super_league":      "GRE",
-    "europa_league":   "UEL",  "conference":        "UECL",
+    "premier_league":    "EPL",   "champions_league":  "UCL",
+    "la_liga":           "ESP",   "bundesliga":         "GER",
+    "serie_a":           "ITA",   "ligue_1":            "FRA",
+    "eredivisie":        "NED",   "primeira_liga":      "POR",
+    "championship":      "CH",    "super_league":       "GRE",
+    "europa_league":     "UEL",   "conference":         "UECL",
+    "super_lig":         "TUR",   "pro_league":         "BEL",
+    "scottish_prem":     "SCO",   "la_liga_2":          "ESP2",
+    "bundesliga_2":      "GER2",  "serie_b":            "ITA2",
+    "ligue_2":           "FRA2",  "league_one":         "ENG3",
+    "allsvenskan":       "SWE",   "superligaen":        "DEN",
+    "eliteserien":       "NOR",   "ekstraklasa":        "POL",
+    "brasileirao":       "BRA",   "argentina_primera":  "ARG",
+    "liga_mx":           "MEX",   "mls":                "MLS",
+    "j1_league":         "JPN",
 }
 
 
@@ -237,23 +246,47 @@ class PregameFrame(ctk.CTkFrame):
 
             bankroll = float(os.getenv("BANKROLL", "1000"))
             scan_all = (league_key == "ALL LEAGUES")
-            # ALL LEAGUES: skip totals_h1 to save 1 credit per league
-            markets  = ["h2h", "totals"] if scan_all else ["h2h", "totals", "totals_h1"]
+            # Always include totals_h1 — adding markets to a single request costs 0 extra credits
+            markets  = ["h2h", "totals", "totals_h1"]
             rows, value_rows, all_targets = [], [], []
+            events_data = []   # fed into AI Tipster + Watchlist after scan
+
+            # Tier lookup: sport_key → tier (for watchlist scoring)
+            from utils.league_map import ODDS_KEY_TO_LEAGUE as _OKL
 
             # ── Inner helper: process one league's events ─────────────────
+            from datetime import date as _date
+            _today = _date.today().isoformat()
+
             def _process_league(lkey, sport_key_inner):
-                _rows, _vrows, _tgts = [], [], []
+                _rows, _vrows, _tgts, _evdata = [], [], [], []
                 try:
                     events = get_odds(sport_key_inner, markets=markets)
                 except Exception:
-                    return _rows, _vrows, _tgts
+                    return _rows, _vrows, _tgts, _evdata
+
+                # Today-only filter
+                events = [e for e in events if e.get("commence", "")[:10] == _today]
 
                 for ev in events:
                     p_1x2  = get_pinnacle_no_vig_probs(ev)
                     p_ou   = get_pinnacle_no_vig_totals(ev, 2.5)
-                    p_ht   = None if scan_all else get_pinnacle_no_vig_ht_totals(ev, 0.5)
-                    p_ht15 = None if scan_all else get_pinnacle_no_vig_ht_totals(ev, 1.5)
+                    p_ht   = get_pinnacle_no_vig_ht_totals(ev, 0.5)
+                    p_ht15 = get_pinnacle_no_vig_ht_totals(ev, 1.5)
+
+                    # Tier from league_map (default 2 if league unknown)
+                    _tier = _OKL.get(sport_key_inner, {}).get("tier", 2)
+
+                    # Collect for AI Tipster + Watchlist
+                    _evdata.append({
+                        "event":  ev,
+                        "p_1x2":  p_1x2,
+                        "p_ou":   p_ou,
+                        "p_ht":   p_ht,
+                        "p_ht15": p_ht15,
+                        "league": lkey,
+                        "tier":   _tier,
+                    })
 
                     checks = []
                     if p_ou:
@@ -333,7 +366,7 @@ class PregameFrame(ctk.CTkFrame):
                         best_ht_odds=best_ht,     p_ht_ou=p_ht,
                         has_value_bet=has_value_ev,
                     ))
-                return _rows, _vrows, _tgts
+                return _rows, _vrows, _tgts, _evdata
 
             # ── Step 1 (ALL LEAGUES): Football-Data.org fixtures pre-fetch ─
             if scan_all:
@@ -366,25 +399,50 @@ class PregameFrame(ctk.CTkFrame):
                     [(league_key, SPORT_KEYS.get(league_key, "soccer_epl"))]
             total = len(items)
 
+            # ── Pre-filter: skip leagues with no games today (0 credits) ──
+            if scan_all:
+                from scrapers.odds_api import get_event_count_today
+                self.app.q(lambda: self._status.configure(
+                    text="Ελέγχω ποια leagues παίζουν σήμερα (0 credits)...",
+                    text_color=C_DIM,
+                ))
+                active_items = []
+                for lkey, sport_key in items:
+                    n_today = get_event_count_today(sport_key)
+                    if n_today > 0:
+                        active_items.append((lkey, sport_key))
+                        print(f"[Scan] {lkey}: {n_today} games today ✓")
+                    else:
+                        print(f"[Scan] {lkey}: 0 games today — skip")
+                skipped = len(items) - len(active_items)
+                items = active_items
+                total = len(items)
+                self.app.q(lambda s=skipped, a=len(active_items): self._status.configure(
+                    text=f"Leagues με παιχνίδια σήμερα: {a}  (παράλειψη {s} χωρίς παιχνίδια)",
+                    text_color=C_DIM,
+                ))
+
             for idx, (lkey, sport_key) in enumerate(items):
                 if scan_all:
                     self.app.q(lambda i=idx, k=lkey, n=total: self._status.configure(
                         text=f"The Odds API [{i+1}/{n}]  {k.replace('_',' ').title()}...",
                         text_color=C_DIM,
                     ))
-                r, vr, t = _process_league(lkey, sport_key)
+                r, vr, t, evd = _process_league(lkey, sport_key)
                 rows.extend(r)
                 value_rows.extend(vr)
                 all_targets.extend(t)
+                events_data.extend(evd)
                 if scan_all and idx < total - 1:
                     _time.sleep(1)
 
             all_targets = score_targets(all_targets)
-            self.app.q(lambda r=rows, vr=value_rows, t=all_targets: self._done(r, vr, t))
+            self.app.q(lambda r=rows, vr=value_rows, t=all_targets, ed=events_data:
+                       self._done(r, vr, t, ed))
         except Exception as e:
             self.app.q(lambda err=str(e): self._error(err))
 
-    def _done(self, rows: list, value_rows: list, targets: list):
+    def _done(self, rows: list, value_rows: list, targets: list, events_data: list = None):
         self._progress.stop()
         self._progress.pack_forget()
         self._scanning = False
@@ -413,6 +471,32 @@ class PregameFrame(ctk.CTkFrame):
                 f"{r['edge']*100:+.1f}%",
                 f"€{r['kelly']:.2f}" if r["is_value"] else "—",
             ))
+
+        # ── AI Tipster + Watchlist: generate + display ───────────────────────
+        tipster_picks  = []
+        watchlist_games = []
+        if events_data:
+            try:
+                from models.tipster import generate_picks
+                tipster_picks = generate_picks(events_data)
+            except Exception:
+                pass
+            try:
+                from models.watchlist import generate_watchlist
+                watchlist_games = generate_watchlist(events_data)
+            except Exception:
+                pass
+            if "tipster" in self.app.frames:
+                try:
+                    self.app.frames["tipster"].update_picks(tipster_picks)
+                    self.app.frames["tipster"].update_watchlist(watchlist_games)
+                except Exception:
+                    pass
+        try:
+            from utils.scan_cache import save_scan
+            save_scan(rows, targets, tipster_picks, watchlist_games)
+        except Exception:
+            pass
 
         # ── Populate Live Targets ─────────────────────────────────────────────
         n = len(targets)
@@ -484,31 +568,59 @@ class LiveFrame(ctk.CTkFrame):
                                   font=ctk.CTkFont(size=12), text_color=C_DIM)
         self._dot.pack(side="left", padx=16)
 
-        # ── Controls ──────────────────────────────────────────────────────────
+        # ── Controls row 1: mode + league ────────────────────────────────────
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
-        ctrl.pack(fill="x", padx=20, pady=8)
+        ctrl.pack(fill="x", padx=20, pady=(8, 2))
 
-        ctk.CTkLabel(ctrl, text="Πρωτάθλημα:", font=ctk.CTkFont(size=13)).pack(side="left")
+        self._auto_var = ctk.BooleanVar(value=True)
+        self._auto_sw  = ctk.CTkSwitch(
+            ctrl, text="Auto (All Leagues)", variable=self._auto_var,
+            font=ctk.CTkFont(size=13), command=self._on_mode_toggle,
+            onvalue=True, offvalue=False,
+        )
+        self._auto_sw.pack(side="left", padx=(0, 16))
+
+        self._league_lbl = ctk.CTkLabel(ctrl, text="Πρωτάθλημα:",
+                                         font=ctk.CTkFont(size=13))
+        self._league_lbl.pack(side="left")
         from scrapers.odds_api import SPORT_KEYS
         self._sport_var = ctk.StringVar(value="super_league")
-        ctk.CTkComboBox(ctrl, values=list(SPORT_KEYS.keys()),
-                        variable=self._sport_var, width=210,
-                        font=ctk.CTkFont(size=12)).pack(side="left", padx=(8, 16))
+        self._sport_cb  = ctk.CTkComboBox(ctrl, values=list(SPORT_KEYS.keys()),
+                                           variable=self._sport_var, width=200,
+                                           font=ctk.CTkFont(size=12))
+        self._sport_cb.pack(side="left", padx=(8, 0))
 
-        ctk.CTkLabel(ctrl, text="Interval (s):", font=ctk.CTkFont(size=13)).pack(side="left")
+        # Tier limit for auto mode
+        self._tier_lbl = ctk.CTkLabel(ctrl, text="  Max Tier:",
+                                       font=ctk.CTkFont(size=13))
+        self._tier_lbl.pack(side="left")
+        self._tier_var = ctk.StringVar(value="2")
+        self._tier_cb  = ctk.CTkComboBox(ctrl, values=["1", "2", "3"],
+                                          variable=self._tier_var, width=60,
+                                          font=ctk.CTkFont(size=12))
+        self._tier_cb.pack(side="left", padx=(4, 0))
+
+        # Apply initial state (auto mode = hide league selector)
+        self._on_mode_toggle()
+
+        # ── Controls row 2: interval + buttons ───────────────────────────────
+        ctrl2 = ctk.CTkFrame(self, fg_color="transparent")
+        ctrl2.pack(fill="x", padx=20, pady=(2, 8))
+
+        ctk.CTkLabel(ctrl2, text="Interval (s):", font=ctk.CTkFont(size=13)).pack(side="left")
         self._interval_var = ctk.StringVar(value="120")
-        ctk.CTkEntry(ctrl, textvariable=self._interval_var,
+        ctk.CTkEntry(ctrl2, textvariable=self._interval_var,
                      width=70, font=ctk.CTkFont(size=12)).pack(side="left", padx=(6, 16))
 
         self._start_btn = ctk.CTkButton(
-            ctrl, text="▶  Start Polling", command=self._start,
+            ctrl2, text="▶  Start Polling", command=self._start,
             width=150, height=38, font=ctk.CTkFont(size=13, weight="bold"),
             fg_color=C_GREEN, hover_color="#009e7f", text_color="black",
         )
         self._start_btn.pack(side="left")
 
         self._stop_btn = ctk.CTkButton(
-            ctrl, text="■  Stop", command=self._stop,
+            ctrl2, text="■  Stop", command=self._stop,
             width=100, height=38, font=ctk.CTkFont(size=13),
             fg_color=C_RED, hover_color="#b71c1c",
             state="disabled",
@@ -516,7 +628,7 @@ class LiveFrame(ctk.CTkFrame):
         self._stop_btn.pack(side="left", padx=10)
 
         self._clear_btn = ctk.CTkButton(
-            ctrl, text="🗑  Clear", command=self._clear_log,
+            ctrl2, text="🗑  Clear", command=self._clear_log,
             width=90, height=38, font=ctk.CTkFont(size=12),
             fg_color="#2d2d44", hover_color="#3d3d5c",
         )
@@ -557,6 +669,15 @@ class LiveFrame(ctk.CTkFrame):
         self._log.pack(fill="x", padx=20, pady=(0, 16))
         self._log_msg("Σύστημα έτοιμο. Πάτα 'Start Polling' για να ξεκινήσει η παρακολούθηση.")
 
+    # ── Mode toggle ───────────────────────────────────────────────────────────
+    def _on_mode_toggle(self):
+        auto = self._auto_var.get()
+        state = "disabled" if auto else "normal"
+        self._sport_cb.configure(state=state)
+        self._league_lbl.configure(text_color=C_DIM if auto else C_TEXT)
+        self._tier_cb.configure(state="normal" if auto else "disabled")
+        self._tier_lbl.configure(text_color=C_TEXT if auto else C_DIM)
+
     # ── Polling ───────────────────────────────────────────────────────────────
     def _start(self):
         if self._polling:
@@ -565,16 +686,23 @@ class LiveFrame(ctk.CTkFrame):
         self._stop_evt.clear()
         self._start_btn.configure(state="disabled")
         self._stop_btn.configure(state="normal")
-        self._dot.configure(text="⬤  LIVE", text_color=C_GREEN)
 
+        auto     = self._auto_var.get()
         interval = int(self._interval_var.get() or "120")
-        sport    = self._sport_var.get()
-        from scrapers.odds_api import SPORT_KEYS
-        sport_key = SPORT_KEYS.get(sport, "soccer_greece_super_league")
+        mode_lbl = "ALL LEAGUES" if auto else self._sport_var.get().upper()
+        self._dot.configure(text=f"⬤  LIVE — {mode_lbl}", text_color=C_GREEN)
 
-        self._thread = threading.Thread(
-            target=self._poll_loop, args=(sport_key, interval), daemon=True
-        )
+        if auto:
+            max_tier = int(self._tier_var.get() or "2")
+            self._thread = threading.Thread(
+                target=self._poll_loop_auto, args=(interval, max_tier), daemon=True
+            )
+        else:
+            from scrapers.odds_api import SPORT_KEYS
+            sport_key = SPORT_KEYS.get(self._sport_var.get(), "soccer_greece_super_league")
+            self._thread = threading.Thread(
+                target=self._poll_loop, args=(sport_key, interval), daemon=True
+            )
         self._thread.start()
 
     def _stop(self):
@@ -591,11 +719,27 @@ class LiveFrame(ctk.CTkFrame):
         while not self._stop_evt.is_set():
             iteration += 1
             self.app.q(lambda i=iteration: self._log_msg(
-                f"[Scan #{i}] {datetime.now().strftime('%H:%M:%S')} — σάρωση in-play..."
+                f"[Scan #{i}] {datetime.now().strftime('%H:%M:%S')} — σάρωση {sport_key}..."
             ))
             try:
                 from scrapers.live_scanner import scan_once
                 results = scan_once(sport_key)
+                self.app.q(lambda r=results, i=iteration: self._update_live(r, i))
+            except Exception as e:
+                self.app.q(lambda err=str(e): self._log_msg(f"⚠ Error: {err}"))
+
+            self._stop_evt.wait(interval)
+
+    def _poll_loop_auto(self, interval: int, max_tier: int):
+        iteration = 0
+        while not self._stop_evt.is_set():
+            iteration += 1
+            self.app.q(lambda i=iteration: self._log_msg(
+                f"[Auto #{i}] {datetime.now().strftime('%H:%M:%S')} — σάρωση όλων των leagues (tier ≤ {max_tier})..."
+            ))
+            try:
+                from scrapers.live_scanner import scan_all_live
+                results = scan_all_live(max_tier=max_tier)
                 self.app.q(lambda r=results, i=iteration: self._update_live(r, i))
             except Exception as e:
                 self.app.q(lambda err=str(e): self._log_msg(f"⚠ Error: {err}"))
@@ -617,7 +761,8 @@ class LiveFrame(ctk.CTkFrame):
 
         self._log_msg(f"→ {len(results)} in-play αγώνες:")
         for r in results:
-            match_name = f"{r['home_team']} vs {r['away_team']}"
+            league_tag = f" [{r['league']}]" if r.get("league") else ""
+            match_name = f"{r['home_team']} vs {r['away_team']}{league_tag}"
             score      = f"{r['home_score']}-{r['away_score']}"
             minute_n   = r.get("minute", 0)
             minute_str = f"{minute_n}'"
@@ -714,6 +859,237 @@ class LiveFrame(ctk.CTkFrame):
         self._log.configure(state="disabled")
         for i in self._tree.get_children():
             self._tree.delete(i)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AI TIPSTER FRAME
+# ═══════════════════════════════════════════════════════════════════════════════
+class TipsterFrame(ctk.CTkFrame):
+    def __init__(self, parent, app):
+        super().__init__(parent, corner_radius=12, fg_color=C_CARD)
+        self.app        = app
+        self._picks     = []
+        self._watchlist = []
+        self._build()
+
+    def _build(self):
+        # ── Header ────────────────────────────────────────────────────────────
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.pack(fill="x", padx=20, pady=(16, 4))
+
+        ctk.CTkLabel(hdr, text="AI Tipster",
+                     font=ctk.CTkFont(size=22, weight="bold")).pack(side="left")
+        ctk.CTkLabel(hdr, text="High Probability Selections",
+                     font=ctk.CTkFont(size=12), text_color=C_DIM).pack(side="left", padx=12)
+
+        self._update_lbl = ctk.CTkLabel(hdr, text="",
+                                         font=ctk.CTkFont(size=11), text_color=C_DIM)
+        self._update_lbl.pack(side="right")
+
+        # ── Info banner ───────────────────────────────────────────────────────
+        info = ctk.CTkFrame(self, fg_color="#0d0d1a", corner_radius=8)
+        info.pack(fill="x", padx=20, pady=(0, 10))
+        ctk.CTkLabel(
+            info,
+            text=(
+                "ℹ  Τρέξε το Pre-game Scan (Tab 1) για να γεμίσουν τα picks  ·  "
+                "Αποδόσεις ≥ 1.40  ·  Combo = Win + Over 2.5 για καλύτερη απόδοση"
+            ),
+            font=ctk.CTkFont(size=11), text_color=C_DIM,
+        ).pack(pady=7, padx=14)
+
+        # ── Watch Live Today section ──────────────────────────────────────────
+        wl_hdr = ctk.CTkFrame(self, fg_color="transparent")
+        wl_hdr.pack(fill="x", padx=20, pady=(0, 4))
+        ctk.CTkLabel(wl_hdr, text="Watch Live Today",
+                     font=ctk.CTkFont(size=15, weight="bold"),
+                     text_color="#00b894").pack(side="left")
+        ctk.CTkLabel(wl_hdr, text="  — αγώνες με το υψηλότερο HT betting potential",
+                     font=ctk.CTkFont(size=11), text_color=C_DIM).pack(side="left")
+
+        self._wl_frame = ctk.CTkFrame(self, fg_color="#0d0d1a", corner_radius=8, height=110)
+        self._wl_frame.pack(fill="x", padx=20, pady=(0, 12))
+        self._wl_frame.pack_propagate(False)
+
+        self._wl_empty = ctk.CTkLabel(
+            self._wl_frame,
+            text="Τρέξε Pre-game Scan για να εμφανιστούν οι αγώνες της ημέρας",
+            font=ctk.CTkFont(size=11), text_color=C_DIM,
+        )
+        self._wl_empty.pack(expand=True)
+
+        # ── Tier legend ───────────────────────────────────────────────────────
+        legend = ctk.CTkFrame(self, fg_color="transparent")
+        legend.pack(fill="x", padx=20, pady=(0, 8))
+        for label, color, desc in [
+            ("LOCK",       "#00b894", "≥ 88% — Σιδερένιο"),
+            ("STRONG",     "#fdcb6e", "78–88% — Δυνατό"),
+            ("VALUE PLAY", "#74b9ff", "68–78% — Καλή επιλογή"),
+            ("COMBO",      "#e17055", "Win + O2.5 — Απόδοση ≥ 1.40"),
+        ]:
+            pill = ctk.CTkFrame(legend, fg_color="#1e1e30", corner_radius=6)
+            pill.pack(side="left", padx=4)
+            ctk.CTkLabel(pill, text=f"  {label}  ",
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color=color).pack(side="left")
+            ctk.CTkLabel(pill, text=f"{desc}  ",
+                         font=ctk.CTkFont(size=10), text_color=C_DIM).pack(side="left")
+
+        # ── Scrollable picks cards area ───────────────────────────────────────
+        self._scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self._scroll.pack(fill="both", expand=True, padx=20, pady=(0, 16))
+
+        self._empty_lbl = ctk.CTkLabel(
+            self._scroll,
+            text="Δεν υπάρχουν picks ακόμα.\nΤρέξε το Pre-game Scan (Tab 1) πρώτα.",
+            font=ctk.CTkFont(size=14), text_color=C_DIM,
+        )
+        self._empty_lbl.pack(pady=80)
+
+    # ── Public API ────────────────────────────────────────────────────────────
+    def update_picks(self, picks: list):
+        """Called automatically after pre-game scan completes."""
+        self._picks = picks
+        for w in self._scroll.winfo_children():
+            w.destroy()
+
+        if not picks:
+            ctk.CTkLabel(
+                self._scroll,
+                text="Κανένα pick δεν πληροί τα κριτήρια σήμερα.\n"
+                     "(Χρειάζεται Confidence ≥ 68% + διαθέσιμες αποδόσεις)",
+                font=ctk.CTkFont(size=13), text_color=C_DIM,
+            ).pack(pady=60)
+            self._update_lbl.configure(text="")
+            return
+
+        self._update_lbl.configure(
+            text=f"Ενημερώθηκε: {datetime.now().strftime('%H:%M')}  |  {len(picks)} picks"
+        )
+        for pick in picks:
+            self._make_card(pick)
+
+    def update_watchlist(self, games: list):
+        """Called after pre-game scan with scored watchlist games."""
+        self._watchlist = games
+        for w in self._wl_frame.winfo_children():
+            w.destroy()
+
+        if not games:
+            ctk.CTkLabel(
+                self._wl_frame,
+                text="Δεν βρέθηκαν αγώνες με επαρκή HT potential σήμερα.",
+                font=ctk.CTkFont(size=11), text_color=C_DIM,
+            ).pack(expand=True)
+            return
+
+        # Horizontal scrollable strip of mini-cards
+        strip = ctk.CTkScrollableFrame(
+            self._wl_frame, fg_color="transparent",
+            orientation="horizontal", height=95,
+        )
+        strip.pack(fill="both", expand=True, padx=8, pady=6)
+
+        for g in games:
+            self._make_watchlist_card(strip, g)
+
+    def _make_watchlist_card(self, parent, game):
+        color = game.rating_color
+        card  = ctk.CTkFrame(
+            parent, fg_color="#1a1a2e", corner_radius=10,
+            border_width=2, border_color=color, width=190,
+        )
+        card.pack(side="left", padx=6, pady=4)
+        card.pack_propagate(False)
+
+        # Rating pill (top)
+        pill = ctk.CTkFrame(card, fg_color=color, corner_radius=4)
+        pill.pack(fill="x", padx=8, pady=(6, 3))
+        ctk.CTkLabel(
+            pill,
+            text=f"  {game.rating}  {game.kickoff_time}  ",
+            font=ctk.CTkFont(size=9, weight="bold"),
+            text_color="black",
+        ).pack()
+
+        # Match name
+        abbr = LEAGUE_ABBREV.get(game.league, game.league[:4].upper())
+        ctk.CTkLabel(
+            card,
+            text=f"[{abbr}]  {game.home_team[:10]} vs {game.away_team[:10]}",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color=C_TEXT,
+        ).pack(padx=8, pady=(2, 1))
+
+        # Stats row
+        ht_str  = f"{game.ht_05_prob:.0%}" if game.ht_05_prob is not None else "—"
+        ou_str  = f"{game.over_25_prob:.0%}"
+        ctk.CTkLabel(
+            card,
+            text=f"HT O0.5: {ht_str}   O2.5: {ou_str}",
+            font=ctk.CTkFont(size=9), text_color=C_DIM,
+        ).pack(padx=8, pady=(1, 6))
+
+    def _make_card(self, pick):
+        from models.tipster import TIER_COLORS
+        tier_color = pick.tier_color
+
+        card = ctk.CTkFrame(
+            self._scroll,
+            fg_color="#1a1a2e",
+            corner_radius=10,
+            border_width=2,
+            border_color=tier_color,
+        )
+        card.pack(fill="x", pady=5)
+        card.grid_columnconfigure(1, weight=1)
+
+        # ── Left: confidence badge ─────────────────────────────────────────
+        badge = ctk.CTkFrame(card, fg_color="#0d0d1a", corner_radius=8, width=96)
+        badge.grid(row=0, column=0, rowspan=3, padx=(12, 0), pady=12, sticky="ns")
+        badge.grid_propagate(False)
+
+        ctk.CTkLabel(badge, text=pick.confidence_pct,
+                     font=ctk.CTkFont(size=28, weight="bold"),
+                     text_color=tier_color).pack(expand=True, pady=(12, 4))
+
+        tier_pill = ctk.CTkFrame(badge, fg_color=tier_color, corner_radius=4)
+        tier_pill.pack(padx=8, pady=(0, 12), fill="x")
+        ctk.CTkLabel(tier_pill, text=pick.tier,
+                     font=ctk.CTkFont(size=9, weight="bold"),
+                     text_color="black").pack()
+
+        # ── Right: details ─────────────────────────────────────────────────
+        # Row 1: Match name + date
+        abbr       = LEAGUE_ABBREV.get(pick.league, pick.league[:4].upper())
+        match_text = f"[{abbr}]  {pick.match}"
+        r1 = ctk.CTkFrame(card, fg_color="transparent")
+        r1.grid(row=0, column=1, padx=12, pady=(10, 2), sticky="w")
+        ctk.CTkLabel(r1, text=match_text,
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=C_TEXT).pack(side="left")
+        ctk.CTkLabel(r1, text=f"  {pick.date}",
+                     font=ctk.CTkFont(size=11), text_color=C_DIM).pack(side="left")
+
+        # Row 2: Market + odds
+        r2 = ctk.CTkFrame(card, fg_color="transparent")
+        r2.grid(row=1, column=1, padx=12, pady=2, sticky="w")
+        ctk.CTkLabel(r2, text=f"Αγορά:  {pick.market}",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color="#74b9ff").pack(side="left")
+        if pick.best_odds > 1.0:
+            ctk.CTkLabel(r2,
+                         text=f"     @{pick.best_odds:.2f}   {pick.best_bookmaker}",
+                         font=ctk.CTkFont(size=12), text_color=C_YELLOW).pack(side="left")
+
+        # Row 3: Signal badges
+        r3 = ctk.CTkFrame(card, fg_color="transparent")
+        r3.grid(row=2, column=1, padx=12, pady=(2, 10), sticky="w")
+        for sig in pick.signals:
+            b = ctk.CTkFrame(r3, fg_color="#252540", corner_radius=4)
+            b.pack(side="left", padx=(0, 5))
+            ctk.CTkLabel(b, text=f"  ✓ {sig}  ",
+                         font=ctk.CTkFont(size=10), text_color="#a0aec0").pack()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -953,7 +1329,7 @@ class HistoryFrame(ctk.CTkFrame):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Value Betting Bot  v0.4")
+        self.title("Value Betting Bot  v0.5")
         self.geometry("1280x780")
         self.minsize(1050, 650)
         self.configure(fg_color=C_BG)
@@ -984,7 +1360,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(sb, text="⚽", font=ctk.CTkFont(size=32)).pack(pady=(24, 4))
         ctk.CTkLabel(sb, text="Value Bot",
                      font=ctk.CTkFont(size=18, weight="bold")).pack()
-        ctk.CTkLabel(sb, text="v0.4  |  free APIs",
+        ctk.CTkLabel(sb, text="v0.5  |  free APIs",
                      font=ctk.CTkFont(size=10), text_color=C_DIM).pack(pady=(2, 20))
 
         ctk.CTkFrame(sb, height=1, fg_color="#2d2d50").pack(fill="x", padx=16, pady=4)
@@ -992,6 +1368,7 @@ class App(ctk.CTk):
         nav = [
             ("pregame", "🔍   Pre-game Scan"),
             ("live",    "🔴   Live Monitor"),
+            ("tipster", "🤖   AI Tipster"),
             ("history", "📊   History & PnL"),
         ]
         self._nav_btns: dict[str, ctk.CTkButton] = {}
@@ -1015,6 +1392,24 @@ class App(ctk.CTk):
         self._sb_pending = ctk.CTkLabel(sb, text="Pending: —",
                                          font=ctk.CTkFont(size=12), text_color=C_DIM)
         self._sb_pending.pack(pady=2)
+
+        ctk.CTkFrame(sb, height=1, fg_color="#2d2d50").pack(fill="x", padx=16, pady=(10, 6))
+
+        # ── API Credits panel ─────────────────────────────────────────────────
+        ctk.CTkLabel(sb, text="API Credits",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color="#636e72").pack()
+
+        self._sb_odds_api    = ctk.CTkLabel(sb, text="Odds API: —",
+                                             font=ctk.CTkFont(size=11), text_color=C_DIM)
+        self._sb_odds_api.pack(pady=1)
+        self._sb_apifootball = ctk.CTkLabel(sb, text="API-Football: —",
+                                             font=ctk.CTkFont(size=11), text_color=C_DIM)
+        self._sb_apifootball.pack(pady=1)
+        self._sb_fdorg       = ctk.CTkLabel(sb, text="Football-Data: —",
+                                             font=ctk.CTkFont(size=11), text_color=C_DIM)
+        self._sb_fdorg.pack(pady=1)
+
         self._refresh_sidebar()
 
         # ── Main area ─────────────────────────────────────────────────────────
@@ -1024,10 +1419,90 @@ class App(ctk.CTk):
         self.frames = {
             "pregame": PregameFrame(main, self),
             "live":    LiveFrame(main, self),
+            "tipster": TipsterFrame(main, self),
             "history": HistoryFrame(main, self),
         }
         for f in self.frames.values():
             f.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        self._restore_from_cache()
+
+    def _restore_from_cache(self):
+        """Populate all tabs from last_scan.json if it's from today."""
+        try:
+            from utils.scan_cache import load_scan
+            cached = load_scan()
+            if not cached:
+                return
+
+            # ── Restore Pre-game table ──────────────────────────────────
+            pg = self.frames["pregame"]
+            rows       = cached.get("rows", [])
+            value_rows = [r for r in rows if r.get("is_value")]
+            n_leagues  = len(set(r.get("league","") for r in rows))
+            multi      = n_leagues > 1
+            for i, r in enumerate(rows):
+                tag  = "value" if r.get("is_value") else ("alt" if i % 2 else "")
+                abbr = LEAGUE_ABBREV.get(r.get("league",""), r.get("league","")[:4].upper())
+                match = f"[{abbr}]  {r['match']}" if multi else r["match"]
+                pg._tree.insert("", "end", tags=(tag,), values=(
+                    match, r.get("date",""), r.get("market",""),
+                    f"{r.get('prob',0):.1%}", r.get("bookmaker",""), r.get("odds",""),
+                    f"{r.get('edge',0)*100:+.1f}%",
+                    f"€{r.get('kelly',0):.2f}" if r.get("is_value") else "—",
+                ))
+            cnt = len(value_rows)
+            pg._status.configure(
+                text=f"✓ {cnt} value bets (cached)  |  {len(rows)} αγορές",
+                text_color=C_GREEN if cnt else C_DIM,
+            )
+
+            # ── Restore Live Targets ──────────────────────────────────
+            from models.live_targets import LiveTarget
+            targets = []
+            for td in cached.get("targets", []):
+                try:
+                    t = LiveTarget(**td)
+                    targets.append(t)
+                except Exception:
+                    pass
+            if targets:
+                pg._targets_lbl.configure(text=f"Σημερινά Live Targets  ({len(targets)})")
+                for t in targets:
+                    tag = {1: "target_high", 2: "target_med", 3: "target_low"}.get(t.priority, "target_low")
+                    pg._targets_tree.insert("", "end", tags=(tag,), values=(
+                        t.priority_label, t.match, t.target_type,
+                        f"{t.key_prob:.1%}",
+                        f"{t.current_odds:.2f}" if t.current_odds else "—",
+                        t.action,
+                    ))
+
+            # ── Restore Tipster picks ──────────────────────────────────
+            from models.tipster import TipsterPick
+            tipster_picks = []
+            for pd in cached.get("tipster_picks", []):
+                try:
+                    tipster_picks.append(TipsterPick(**pd))
+                except Exception:
+                    pass
+            if tipster_picks:
+                self.frames["tipster"].update_picks(tipster_picks)
+
+            # ── Restore Watchlist ──────────────────────────────────────
+            from models.watchlist import WatchlistGame
+            watchlist_games = []
+            for wd in cached.get("watchlist", []):
+                try:
+                    watchlist_games.append(WatchlistGame(**wd))
+                except Exception:
+                    pass
+            if watchlist_games:
+                self.frames["tipster"].update_watchlist(watchlist_games)
+
+            saved_at = cached.get("saved_at", "")[:16].replace("T", " ")
+            print(f"[Cache] Restored scan from {saved_at}")
+        except Exception as e:
+            print(f"[Cache] Restore error: {e}")
 
     def _show(self, name: str):
         self.frames[name].tkraise()
@@ -1038,6 +1513,7 @@ class App(ctk.CTk):
             self._refresh_sidebar()
 
     def _refresh_sidebar(self):
+        # PnL / pending
         try:
             from utils.database import get_stats
             s   = get_stats()
@@ -1048,6 +1524,50 @@ class App(ctk.CTk):
             self._sb_pending.configure(text=f"Pending: {pen}", text_color=C_YELLOW if pen else C_DIM)
         except Exception:
             pass
+
+        # API credits
+        try:
+            from scrapers.odds_api import get_credits
+            c   = get_credits()
+            rem = c.get("remaining")
+            used = c.get("used")
+            if rem is not None:
+                try:
+                    rem_i = int(rem)
+                    col_o = C_GREEN if rem_i > 100 else (C_YELLOW if rem_i > 30 else C_RED)
+                except (ValueError, TypeError):
+                    rem_i, col_o = rem, C_DIM
+                self._sb_odds_api.configure(
+                    text=f"Odds API: {rem_i} / 500",
+                    text_color=col_o,
+                )
+        except Exception:
+            pass
+
+        try:
+            from scrapers.apifootball import get_remaining
+            rem_af = get_remaining()
+            if rem_af is not None:
+                col_af = C_GREEN if rem_af > 30 else (C_YELLOW if rem_af > 10 else C_RED)
+                self._sb_apifootball.configure(
+                    text=f"API-Football: {rem_af} / 100",
+                    text_color=col_af,
+                )
+        except Exception:
+            pass
+
+        try:
+            from scrapers.football_data import get_requests_used, DAILY_LIMIT
+            used_fd = get_requests_used()
+            rem_fd  = DAILY_LIMIT - used_fd
+            col_fd  = C_GREEN if rem_fd > 30 else (C_YELLOW if rem_fd > 10 else C_RED)
+            self._sb_fdorg.configure(
+                text=f"Football-Data: {rem_fd} / {DAILY_LIMIT}",
+                text_color=col_fd,
+            )
+        except Exception:
+            pass
+
         self.after(30_000, self._refresh_sidebar)   # ανανέωση κάθε 30s
 
 

@@ -201,6 +201,165 @@ def scan_once(sport_key: str, our_model_probs: dict = None) -> list:
     return enriched
 
 
+def _fuzzy_event_match(parsed_event: dict, home: str, away: str) -> bool:
+    """Check if a parsed Odds API event matches the given team names."""
+    ph = parsed_event.get("home_team", "").lower()
+    pa = parsed_event.get("away_team", "").lower()
+    h, a = home.lower(), away.lower()
+    home_match = h in ph or ph in h or any(w in ph for w in h.split() if len(w) > 3)
+    away_match = a in pa or pa in a or any(w in pa for w in a.split() if len(w) > 3)
+    return home_match and away_match
+
+
+def scan_all_live(max_tier: int = 2, max_matches: int = 6) -> list:
+    """
+    Scans ALL quality leagues for live matches — no league pre-selection needed.
+
+    Step 1 — Discover  (1 API-Football request):
+        /fixtures?live=all → filter by league quality + minute + score
+    Step 2 — Team form  (2 API-Football requests per match):
+        /fixtures?team={id}&last=6 for home and away
+    Step 3 — Odds       (1 Odds API credit per unique league found):
+        fetch odds once per league, fuzzy-match to discovered fixtures
+    Step 4 — Analyse    (0 extra requests):
+        same Over 2.5 + HT 0.5 + HT 1.5 value logic as scan_once()
+
+    Typical cost for 5 matches in 3 leagues: ~11 API-Football + 3 Odds API credits.
+    """
+    from collections import defaultdict
+    from scrapers.apifootball import discover_live_matches, get_team_form, get_live_stats
+    from scrapers.odds_api import (_parse_event, get_pinnacle_no_vig_totals,
+                                    get_pinnacle_no_vig_ht_totals)
+    from models.live_model import live_over_probability, live_ht_probability
+    from models.value_calculator import compare_bookmakers
+
+    # ── Step 1: Discover live candidates ─────────────────────────────────────
+    candidates = discover_live_matches(max_tier=max_tier, max_matches=max_matches)
+    if not candidates:
+        return []
+
+    # ── Step 2: Team form for each match ──────────────────────────────────────
+    for c in candidates:
+        c["home_form"] = get_team_form(c["home_id"])
+        c["away_form"] = get_team_form(c["away_id"])
+
+    # ── Step 3: Fetch Odds API once per unique league ─────────────────────────
+    by_odds_key: dict[str, list] = defaultdict(list)
+    for c in candidates:
+        by_odds_key[c["odds_key"]].append(c)
+
+    odds_by_fixture: dict[int, dict] = {}  # fixture_id → parsed Odds API event
+
+    for odds_key, matches in by_odds_key.items():
+        raw = _get(
+            f"/sports/{odds_key}/odds/",
+            {
+                "regions":    "eu,uk",
+                "markets":    "h2h,totals,totals_h1",
+                "oddsFormat": "decimal",
+                "dateFormat": "iso",
+            },
+        )
+        if not raw:
+            continue
+        for event_raw in raw:
+            parsed = _parse_event(event_raw)
+            for m in matches:
+                if m["fixture_id"] in odds_by_fixture:
+                    continue
+                if _fuzzy_event_match(parsed, m["home_team"], m["away_team"]):
+                    odds_by_fixture[m["fixture_id"]] = parsed
+                    m["odds_event_id"] = parsed.get("id", "")
+                    break
+
+    # ── Step 4: Value analysis for each match ─────────────────────────────────
+    enriched = []
+    for m in candidates:
+        ev_odds     = odds_by_fixture.get(m["fixture_id"])
+        minute      = m["minute"]
+        total_goals = m["home_score"] + m["away_score"]
+
+        entry: dict = {
+            "id":          m.get("odds_event_id", str(m["fixture_id"])),
+            "home_team":   m["home_team"],
+            "away_team":   m["away_team"],
+            "home_score":  m["home_score"],
+            "away_score":  m["away_score"],
+            "total_goals": total_goals,
+            "minute":      minute,
+            "league":      m["league_name"],
+            "commence":    "",
+            "last_update": "",
+            # form data (available for display/logging)
+            "home_form":   m.get("home_form", {}),
+            "away_form":   m.get("away_form", {}),
+            # value outputs
+            "value_bets":      [],
+            "ht_05_prob":      None,
+            "ht_05_bets":      [],
+            "ht_15_prob":      None,
+            "ht_15_bets":      [],
+            "live_over_prob":  None,
+            "live_stats":      None,
+        }
+
+        if ev_odds:
+            # Over 2.5
+            p_ou = get_pinnacle_no_vig_totals(ev_odds, 2.5)
+            if p_ou:
+                pregame_prob = p_ou["over_prob"]
+                live_result  = live_over_probability(pregame_prob, total_goals, minute, 2.5)
+                live_prob    = live_result["live_over_prob"]
+
+                bm_odds = {
+                    bm: bd.get("totals", {}).get("over_2_5")
+                    for bm, bd in ev_odds.get("odds", {}).items()
+                    if bm != "pinnacle" and bd.get("totals", {}).get("over_2_5")
+                }
+                if bm_odds:
+                    comps = compare_bookmakers(live_prob, bm_odds)
+                    entry["value_bets"]         = [c for c in comps if c["is_value_bet"]]
+                    entry["pinnacle_over_prob"]  = pregame_prob
+                    entry["live_over_prob"]      = live_prob
+
+            # HT markets — first half only
+            if minute <= 45:
+                for ht_target, prob_key, bets_key in [
+                    (0.5, "ht_05_prob", "ht_05_bets"),
+                    (1.5, "ht_15_prob", "ht_15_bets"),
+                ]:
+                    p_ht = get_pinnacle_no_vig_ht_totals(ev_odds, ht_target)
+                    if not p_ht or abs(p_ht["point"] - ht_target) > 0.3:
+                        continue
+                    ht_result = live_ht_probability(p_ht["over_prob"], total_goals, minute, ht_target)
+                    if ht_result.get("settled"):
+                        continue
+                    live_ht_prob = ht_result["live_ht_prob"]
+                    entry[prob_key] = live_ht_prob
+
+                    pt_str = str(p_ht["point"]).replace(".", "_")
+                    bm_ht = {
+                        bm: bd.get("totals_h1", {}).get(f"over_{pt_str}")
+                        for bm, bd in ev_odds.get("odds", {}).items()
+                        if bm != "pinnacle" and bd.get("totals_h1", {}).get(f"over_{pt_str}")
+                    }
+                    if bm_ht:
+                        ht_comps = compare_bookmakers(live_ht_prob, bm_ht)
+                        entry[bets_key] = [c for c in ht_comps if c["is_value_bet"]]
+
+        # Live stats from API-Football — only when value found
+        has_value = bool(entry["value_bets"] or entry["ht_05_bets"] or entry["ht_15_bets"])
+        if has_value:
+            try:
+                entry["live_stats"] = get_live_stats(m["home_team"], m["away_team"])
+            except Exception:
+                pass
+
+        enriched.append(entry)
+
+    return enriched
+
+
 def run_live_loop(sport_key: str, interval_seconds: int = 120, max_iterations: int = 30):
     """
     Polling loop — ανανεώνει κάθε interval_seconds.

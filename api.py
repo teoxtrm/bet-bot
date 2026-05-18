@@ -123,7 +123,7 @@ async def startup():
 # ── Login ─────────────────────────────────────────────────────────────────────
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, next: str = "/pregame"):
-    return templates.TemplateResponse("login.html", {"request": request, "next": next})
+    return templates.TemplateResponse(request=request, name="login.html", context={"next": next})
 
 
 @app.post("/login")
@@ -152,22 +152,22 @@ async def root():
 
 @app.get("/pregame", response_class=HTMLResponse)
 async def page_pregame(request: Request, auth=Depends(check_session)):
-    return templates.TemplateResponse("pregame.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="pregame.html")
 
 
 @app.get("/live", response_class=HTMLResponse)
 async def page_live(request: Request, auth=Depends(check_session)):
-    return templates.TemplateResponse("live.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="live.html")
 
 
 @app.get("/tipster", response_class=HTMLResponse)
 async def page_tipster(request: Request, auth=Depends(check_session)):
-    return templates.TemplateResponse("tipster.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="tipster.html")
 
 
 @app.get("/history", response_class=HTMLResponse)
 async def page_history(request: Request, auth=Depends(check_session)):
-    return templates.TemplateResponse("history.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="history.html")
 
 
 # ── WebSocket — cookies sent automatically by browser ────────────────────────

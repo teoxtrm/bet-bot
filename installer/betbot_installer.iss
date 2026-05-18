@@ -1,12 +1,12 @@
 [Setup]
 AppName=BetBot
-AppVersion=1.0.1
+AppVersion=1.0.3
 AppPublisher=teoxtrm
 AppSupportURL=https://github.com/teoxtrm/bet-bot
 DefaultDirName={autopf}\BetBot
 DefaultGroupName=BetBot
 OutputDir=.
-OutputBaseFilename=BetBot_Setup_v1.0.1
+OutputBaseFilename=BetBot_Setup_v1.0.3
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -18,7 +18,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"; Flags: checked
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
 
 [Files]
 Source: "..\dist\BetBot\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

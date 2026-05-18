@@ -119,6 +119,7 @@ def _get(path: str, params: dict, track_credits: bool = True) -> list | dict | N
             print("[OddsAPI] Λάθος API key.")
         elif r.status_code == 422:
             print(f"[OddsAPI] Μη υποστηριζόμενη παράμετρος: {r.json().get('message','')}")
+            return False   # distinct from None so callers can retry with fewer markets
         else:
             print(f"[OddsAPI] Error {r.status_code}: {r.text[:200]}")
     except requests.RequestException as e:
@@ -172,6 +173,11 @@ def get_odds(sport_key: str, markets: list = None, bookmakers: list = None) -> l
         params["bookmakers"] = ",".join(bookmakers)
 
     raw = _get(f"/sports/{sport_key}/odds/", params)
+    if raw is False and "totals_h1" in markets:
+        # League doesn't support totals_h1 — retry without it (no extra credit cost)
+        params["markets"] = ",".join(m for m in markets if m != "totals_h1")
+        print(f"[OddsAPI] Retry {sport_key} without totals_h1")
+        raw = _get(f"/sports/{sport_key}/odds/", params)
     if not raw:
         return []
     return [_parse_event(e) for e in raw]

@@ -1,83 +1,8 @@
 {
-  "saved_at": "2026-05-18T10:41:54.543124",
+  "saved_at": "2026-05-18T11:50:30.121007",
   "scan_date": "2026-05-18",
-  "rows": [
-    {
-      "league": "premier_league",
-      "match": "Arsenal vs Burnley",
-      "date": "2026-05-18",
-      "market": "Away Win",
-      "prob": 0.0362,
-      "bookmaker": "betfair_ex_eu",
-      "odds": 36.0,
-      "edge": 0.3032,
-      "kelly": 2.17,
-      "is_value": true
-    },
-    {
-      "league": "premier_league",
-      "match": "Arsenal vs Burnley",
-      "date": "2026-05-18",
-      "market": "Draw",
-      "prob": 0.0768,
-      "bookmaker": "betfair_ex_eu",
-      "odds": 13.5,
-      "edge": 0.0368,
-      "kelly": 0.74,
-      "is_value": false
-    },
-    {
-      "league": "premier_league",
-      "match": "Arsenal vs Burnley",
-      "date": "2026-05-18",
-      "market": "Under 2.5",
-      "prob": 0.5155,
-      "bookmaker": "tipico_de",
-      "odds": 1.97,
-      "edge": 0.0155,
-      "kelly": 4.0,
-      "is_value": false
-    },
-    {
-      "league": "premier_league",
-      "match": "Arsenal vs Burnley",
-      "date": "2026-05-18",
-      "market": "Home Win",
-      "prob": 0.8869,
-      "bookmaker": "unibet_se",
-      "odds": 1.11,
-      "edge": -0.0155,
-      "kelly": 0.0,
-      "is_value": false
-    },
-    {
-      "league": "premier_league",
-      "match": "Arsenal vs Burnley",
-      "date": "2026-05-18",
-      "market": "Over 2.5",
-      "prob": 0.4845,
-      "bookmaker": "onexbet",
-      "odds": 2.02,
-      "edge": -0.0213,
-      "kelly": 0.0,
-      "is_value": false
-    }
-  ],
-  "targets": [
-    {
-      "match": "Arsenal vs Burnley",
-      "home_team": "Arsenal",
-      "away_team": "Burnley",
-      "date": "2026-05-18",
-      "league": "soccer_epl",
-      "event_id": "818582ac502774aad4bb82309b9b85fa",
-      "target_type": "FAVORITE WIN (Home)",
-      "reason": "Home: 88.7% > 70% | Pre-game odds 1.11 < 1.35",
-      "key_prob": 0.8869,
-      "current_odds": 1.11,
-      "action": "Αν στο 20' η κατάσταση είναι 0-0 ή 0-1 εναντίον του φαβορί (home), οι live odds θα ανέβουν πάνω από 1.50+ → value window.",
-      "priority": 1
-    }
-  ],
-  "tipster_picks": []
+  "rows": [],
+  "targets": [],
+  "tipster_picks": [],
+  "watchlist": []
 }

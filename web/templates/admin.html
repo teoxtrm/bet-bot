@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}— Admin{% endblock %}
+
+{% block content %}
+<div class="p-4 md:p-6 flex flex-col gap-4 max-w-lg mx-auto">
+
+  <h1 class="text-xl font-bold">🔐 Admin — User Management</h1>
+
+  <!-- Existing users -->
+  <div class="bg-card rounded-xl overflow-hidden">
+    <div class="px-4 py-3 border-b border-muted text-sm font-semibold text-dim uppercase">Χρήστες</div>
+    <table class="w-full text-sm">
+      <thead class="bg-muted text-blue-300 text-xs uppercase">
+        <tr>
+          <th class="px-4 py-2 text-left">Username</th>
+          <th class="px-4 py-2 text-center">Role</th>
+          <th class="px-4 py-2 text-center">Created</th>
+          <th class="px-4 py-2 text-center">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for uname, udata in users.items() %}
+        <tr class="border-b border-muted/30">
+          <td class="px-4 py-2.5 font-medium">{{ uname }}</td>
+          <td class="px-4 py-2.5 text-center text-xs {{ 'text-yellow' if udata.get('is_admin') else 'text-dim' }}">
+            {{ 'Admin' if udata.get('is_admin') else 'User' }}
+          </td>
+          <td class="px-4 py-2.5 text-center text-dim text-xs">
+            {{ udata.get('created_at','')[:10] }}
+          </td>
+          <td class="px-4 py-2.5 text-center">
+            {% if uname != username %}
+            <form method="post" action="/admin/delete-user" class="inline"
+                  onsubmit="return confirm('Διαγραφή χρήστη {{ uname }};')">
+              <input type="hidden" name="target" value="{{ uname }}"/>
+              <button class="text-red text-xs hover:underline">Διαγραφή</button>
+            </form>
+            {% else %}
+            <span class="text-dim text-xs">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Create new user -->
+  <div class="bg-card rounded-xl p-5">
+    <div class="text-sm font-semibold text-dim uppercase mb-4">Νέος Χρήστης</div>
+    <form method="post" action="/admin/create-user" class="space-y-3">
+      <div>
+        <label class="text-dim text-sm block mb-1">Username</label>
+        <input name="new_username" type="text" required
+          class="w-full bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none"/>
+      </div>
+      <div>
+        <label class="text-dim text-sm block mb-1">Password</label>
+        <input name="new_password" type="password" required
+          class="w-full bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none"/>
+      </div>
+      <button type="submit"
+        class="w-full bg-accent hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition-colors">
+        ➕ Δημιουργία
+      </button>
+    </form>
+  </div>
+
+  <p class="text-dim text-xs text-center">
+    Ο χρήστης θα πρέπει να βάλει τα δικά του API keys στο /settings μετά την πρώτη είσοδο.
+  </p>
+
+</div>
+{% endblock %}

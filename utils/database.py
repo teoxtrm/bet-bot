@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
 
-DB_PATH = Path("data/bet_bot.db")
+DB_PATH = Path("data/bet_bot.db")  # default (single-user / legacy)
 
 # ─── SCHEMA ──────────────────────────────────────────────────────────────────
 
@@ -61,11 +61,13 @@ CREATE INDEX IF NOT EXISTS idx_bets_teams    ON bets_tracked(home_team, away_tea
 # ─── CONNECTION ───────────────────────────────────────────────────────────────
 
 @contextmanager
-def _conn():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH)
+def _conn(db_path=None):
+    path = Path(db_path) if db_path else DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(path), timeout=20)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA busy_timeout=20000")
     try:
         yield con
         con.commit()
@@ -76,11 +78,12 @@ def _conn():
         con.close()
 
 
-def init_db():
+def init_db(db_path=None):
     """Δημιουργεί τους πίνακες αν δεν υπάρχουν."""
-    with _conn() as con:
+    with _conn(db_path) as con:
         con.executescript(SCHEMA)
-    print(f"[DB] Initialized: {DB_PATH.resolve()}")
+    path = Path(db_path) if db_path else DB_PATH
+    print(f"[DB] Initialized: {path.resolve()}")
 
 
 # ─── INSERT ──────────────────────────────────────────────────────────────────
@@ -99,12 +102,13 @@ def insert_bet(
     kelly_stake: float,
     is_live: bool = False,
     live_minute: int = None,
+    db_path=None,
 ) -> int:
     """
     Καταχωρεί ένα value bet. Αποφεύγει duplicate (ίδιο event+bet_type+bookmaker εντός 4ωρου).
     Επιστρέφει το ID του record ή -1 αν είναι duplicate.
     """
-    with _conn() as con:
+    with _conn(db_path) as con:
         # Duplicate check
         existing = con.execute("""
             SELECT id FROM bets_tracked
@@ -132,7 +136,8 @@ def insert_bet(
 
 def track_value_bet(value_result: dict, kelly_result: dict,
                     match_info: dict, league: str,
-                    is_live: bool = False, live_minute: int = None) -> int:
+                    is_live: bool = False, live_minute: int = None,
+                    db_path=None) -> int:
     """
     Wrapper για εύκολη καταγραφή από value_calculator output.
 
@@ -155,6 +160,7 @@ def track_value_bet(value_result: dict, kelly_result: dict,
         kelly_stake    = kelly_result["suggested_bet"],
         is_live        = is_live,
         live_minute    = live_minute,
+        db_path        = db_path,
     )
     if bet_id > 0:
         print(f"[DB] Tracked bet #{bet_id}: {match_info['home_team']} vs {match_info['away_team']} — {match_info['bet_type']}")
@@ -163,8 +169,8 @@ def track_value_bet(value_result: dict, kelly_result: dict,
 
 # ─── QUERIES ─────────────────────────────────────────────────────────────────
 
-def get_pending_bets() -> list[dict]:
-    with _conn() as con:
+def get_pending_bets(db_path=None) -> list[dict]:
+    with _conn(db_path) as con:
         rows = con.execute("""
             SELECT * FROM bets_tracked WHERE status = 'Pending'
             ORDER BY match_date ASC, created_at ASC
@@ -172,16 +178,16 @@ def get_pending_bets() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_all_bets(limit: int = 100) -> list[dict]:
-    with _conn() as con:
+def get_all_bets(limit: int = 100, db_path=None) -> list[dict]:
+    with _conn(db_path) as con:
         rows = con.execute("""
             SELECT * FROM bets_tracked ORDER BY created_at DESC LIMIT ?
         """, (limit,)).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_stats() -> dict:
-    with _conn() as con:
+def get_stats(db_path=None) -> dict:
+    with _conn(db_path) as con:
         row = con.execute("""
             SELECT
                 COUNT(*)                                     AS total_bets,
@@ -240,12 +246,12 @@ def _determine_outcome(bet_type: str, home_goals: int, away_goals: int) -> str:
     return "Void"  # αγνωστος τύπος
 
 
-def settle_bet(bet_id: int, home_goals: int, away_goals: int) -> dict:
+def settle_bet(bet_id: int, home_goals: int, away_goals: int, db_path=None) -> dict:
     """
     Κλείνει ένα στοίχημα με το τελικό σκορ.
     Επιστρέφει {"status", "profit_loss"}.
     """
-    with _conn() as con:
+    with _conn(db_path) as con:
         bet = con.execute("SELECT * FROM bets_tracked WHERE id=?", (bet_id,)).fetchone()
         if not bet:
             return {"error": f"Bet #{bet_id} not found"}
@@ -278,7 +284,7 @@ def settle_bet(bet_id: int, home_goals: int, away_goals: int) -> dict:
     return {"status": new_status, "profit_loss": pnl}
 
 
-def auto_settle_from_api(sport_key: str = None) -> dict:
+def auto_settle_from_api(sport_key: str = None, db_path=None, api_key: str = None) -> dict:
     """
     Αυτόματο settlement: τραβάει αποτελέσματα από The Odds API
     και κλείνει όλα τα Pending bets που έχουν τελειώσει.
@@ -286,7 +292,7 @@ def auto_settle_from_api(sport_key: str = None) -> dict:
     from scrapers.odds_api import SPORT_KEYS
     import requests, os
 
-    pending = get_pending_bets()
+    pending = get_pending_bets(db_path=db_path)
     if not pending:
         return {"settled": 0, "skipped": 0, "errors": 0}
 
@@ -294,7 +300,7 @@ def auto_settle_from_api(sport_key: str = None) -> dict:
     leagues_needed = {b["league"] for b in pending}
     results_by_teams: dict[tuple, dict] = {}
 
-    API_KEY = os.getenv("ODDS_API_KEY", "")
+    API_KEY = api_key or os.getenv("ODDS_API_KEY", "")
     BASE    = "https://api.the-odds-api.com/v4"
 
     for league in leagues_needed:
@@ -336,7 +342,7 @@ def auto_settle_from_api(sport_key: str = None) -> dict:
             skipped += 1
             continue
         try:
-            outcome = settle_bet(bet["id"], res["home_goals"], res["away_goals"])
+            outcome = settle_bet(bet["id"], res["home_goals"], res["away_goals"], db_path=db_path)
             if "error" not in outcome:
                 settled += 1
                 icon = "W" if outcome["status"] == "Win" else ("L" if outcome["status"] == "Loss" else "V")
@@ -356,9 +362,9 @@ def manual_settle(bet_id: int, home_goals: int, away_goals: int) -> dict:
     return settle_bet(bet_id, home_goals, away_goals)
 
 
-def void_bet(bet_id: int) -> bool:
+def void_bet(bet_id: int, db_path=None) -> bool:
     """Ακυρώνει ένα στοίχημα (π.χ. αγώνας δεν παίχτηκε)."""
-    with _conn() as con:
+    with _conn(db_path) as con:
         con.execute(
             "UPDATE bets_tracked SET status='Void', profit_loss=0, settled_at=datetime('now') WHERE id=?",
             (bet_id,)

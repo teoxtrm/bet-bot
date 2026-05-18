@@ -15,8 +15,16 @@ CACHE_FILE        = pathlib.Path("data/last_scan.json")
 LEAGUE_CACHE_FILE = pathlib.Path("data/league_scans.json")
 
 
-def _ensure_dir():
-    CACHE_FILE.parent.mkdir(exist_ok=True)
+def _paths(user_dir=None):
+    if user_dir:
+        base = pathlib.Path(user_dir)
+        return base / "last_scan.json", base / "league_scans.json"
+    return CACHE_FILE, LEAGUE_CACHE_FILE
+
+
+def _ensure_dir(user_dir=None):
+    cache_file, _ = _paths(user_dir)
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _target_to_dict(t) -> dict:
@@ -38,8 +46,10 @@ def _watchlist_to_dict(g) -> dict:
     return dataclasses.asdict(g)
 
 
-def save_scan(rows: list, targets: list, tipster_picks: list, watchlist: list = None):
-    _ensure_dir()
+def save_scan(rows: list, targets: list, tipster_picks: list, watchlist: list = None,
+              user_dir=None):
+    _ensure_dir(user_dir)
+    cache_file, _ = _paths(user_dir)
     try:
         data = {
             "saved_at":       datetime.now().isoformat(),
@@ -49,17 +59,18 @@ def save_scan(rows: list, targets: list, tipster_picks: list, watchlist: list = 
             "tipster_picks":  [_pick_to_dict(p) for p in tipster_picks],
             "watchlist":      [_watchlist_to_dict(g) for g in (watchlist or [])],
         }
-        CACHE_FILE.write_text(
+        cache_file.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception as e:
         print(f"[ScanCache] save error: {e}")
 
 
-def load_scan() -> dict | None:
+def load_scan(user_dir=None) -> dict | None:
     """Return cached scan if from today, else None."""
+    cache_file, _ = _paths(user_dir)
     try:
-        data = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
         if data.get("scan_date") != date.today().isoformat():
             return None
         return data
@@ -69,31 +80,34 @@ def load_scan() -> dict | None:
 
 # ── Per-league cache ──────────────────────────────────────────────────────────
 
-def save_league_scan(sport_key: str, rows: list, events_data: list, targets: list):
+def save_league_scan(sport_key: str, rows: list, events_data: list, targets: list,
+                     user_dir=None):
     """Save scan results for one league. Merges into league_scans.json."""
-    _ensure_dir()
+    _ensure_dir(user_dir)
+    _, league_file = _paths(user_dir)
     try:
         try:
-            existing = json.loads(LEAGUE_CACHE_FILE.read_text(encoding="utf-8"))
+            existing = json.loads(league_file.read_text(encoding="utf-8"))
         except Exception:
             existing = {}
         existing[sport_key] = {
             "date":        date.today().isoformat(),
             "rows":        [_row_to_dict(r) for r in rows],
-            "events_data": events_data,   # already plain dicts from _process_league
+            "events_data": events_data,
             "targets":     [dataclasses.asdict(t) for t in targets],
         }
-        LEAGUE_CACHE_FILE.write_text(
+        league_file.write_text(
             json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception as e:
         print(f"[ScanCache] save_league error: {e}")
 
 
-def load_league_scan(sport_key: str) -> dict | None:
+def load_league_scan(sport_key: str, user_dir=None) -> dict | None:
     """Return cached league scan if from today, else None."""
+    _, league_file = _paths(user_dir)
     try:
-        existing = json.loads(LEAGUE_CACHE_FILE.read_text(encoding="utf-8"))
+        existing = json.loads(league_file.read_text(encoding="utf-8"))
         entry = existing.get(sport_key)
         if not entry or entry.get("date") != date.today().isoformat():
             return None
@@ -102,9 +116,10 @@ def load_league_scan(sport_key: str) -> dict | None:
         return None
 
 
-def clear_league_cache():
-    """Wipe the per-league cache (e.g. on manual full rescan)."""
+def clear_league_cache(user_dir=None):
+    """Wipe the per-league cache."""
+    _, league_file = _paths(user_dir)
     try:
-        LEAGUE_CACHE_FILE.write_text("{}", encoding="utf-8")
+        league_file.write_text("{}", encoding="utf-8")
     except Exception:
         pass

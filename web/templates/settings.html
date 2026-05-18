@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}— Settings{% endblock %}
+
+{% block content %}
+<div class="p-4 md:p-6 flex flex-col gap-4 max-w-lg mx-auto">
+
+  {% if first %}
+  <div class="bg-blue-900/40 border border-blue-500/50 text-blue-300 rounded-xl px-4 py-3 text-sm">
+    👋 Καλώς ήρθες! Βάλε τα API keys σου για να ξεκινήσεις.
+  </div>
+  {% endif %}
+
+  <h1 class="text-xl font-bold">⚙️ Settings</h1>
+  <p class="text-dim text-sm">Τα API keys αποθηκεύονται μόνο στον server, ξεχωριστά ανά χρήστη.</p>
+
+  <form method="post" action="/settings" class="bg-card rounded-xl p-5 space-y-4">
+
+    <div>
+      <label class="text-sm text-dim block mb-1">The Odds API Key
+        <span class="text-xs ml-1">(<a href="https://the-odds-api.com" target="_blank" class="text-blue-400">the-odds-api.com</a>)</span>
+      </label>
+      <input name="odds_api_key" type="text" value="{{ env.get('ODDS_API_KEY','') }}"
+        placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        class="w-full bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:border-blue-500 focus:outline-none font-mono"/>
+    </div>
+
+    <div>
+      <label class="text-sm text-dim block mb-1">API-Football Key
+        <span class="text-xs ml-1">(<a href="https://api-sports.io" target="_blank" class="text-blue-400">api-sports.io</a>)</span>
+      </label>
+      <input name="api_football_key" type="text" value="{{ env.get('API_FOOTBALL_KEY','') }}"
+        placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        class="w-full bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:border-blue-500 focus:outline-none font-mono"/>
+    </div>
+
+    <div>
+      <label class="text-sm text-dim block mb-1">Football-Data.org Key
+        <span class="text-xs ml-1">(<a href="https://football-data.org" target="_blank" class="text-blue-400">football-data.org</a>)</span>
+      </label>
+      <input name="football_data_key" type="text" value="{{ env.get('FOOTBALL_DATA_KEY','') }}"
+        placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        class="w-full bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:border-blue-500 focus:outline-none font-mono"/>
+    </div>
+
+    <div>
+      <label class="text-sm text-dim block mb-1">Bankroll (€)</label>
+      <input name="bankroll" type="number" value="{{ env.get('BANKROLL','1000') }}" min="1"
+        class="w-full bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:border-blue-500 focus:outline-none"/>
+    </div>
+
+    <button type="submit"
+      class="w-full bg-accent hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition-colors">
+      💾 Αποθήκευση
+    </button>
+  </form>
+
+  <a href="/logout" class="text-dim text-sm text-center hover:text-white">Αποσύνδεση</a>
+
+</div>
+{% endblock %}

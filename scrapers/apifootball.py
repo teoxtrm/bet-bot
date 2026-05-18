@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_URL = "https://v3.football.api-sports.io"
-API_KEY  = os.getenv("APIFOOTBALL_KEY", "")
+API_KEY  = os.getenv("API_FOOTBALL_KEY") or os.getenv("APIFOOTBALL_KEY", "")
 
 # In-memory cache for live fixtures (avoid repeat calls in same scan)
 _fixture_cache: list = []
@@ -174,12 +174,12 @@ def discover_live_matches(
     """
     from utils.league_map import LEAGUE_MAP
 
-    data = _get("/fixtures", {"live": "all"})
-    if not data or not data.get("response"):
+    fixtures = _refresh_live_fixtures()
+    if not fixtures:
         return []
 
     candidates = []
-    for f in data["response"]:
+    for f in fixtures:
         league_id = f.get("league", {}).get("id")
         if league_id not in LEAGUE_MAP:
             continue

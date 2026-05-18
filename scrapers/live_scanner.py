@@ -227,7 +227,7 @@ def scan_all_live(max_tier: int = 2, max_matches: int = 6) -> list:
     Typical cost for 5 matches in 3 leagues: ~11 API-Football + 3 Odds API credits.
     """
     from collections import defaultdict
-    from scrapers.apifootball import discover_live_matches, get_team_form, get_live_stats
+    from scrapers.apifootball import discover_live_matches, get_live_stats
     from scrapers.odds_api import (_parse_event, get_pinnacle_no_vig_totals,
                                     get_pinnacle_no_vig_ht_totals)
     from models.live_model import live_over_probability, live_ht_probability
@@ -237,11 +237,6 @@ def scan_all_live(max_tier: int = 2, max_matches: int = 6) -> list:
     candidates = discover_live_matches(max_tier=max_tier, max_matches=max_matches)
     if not candidates:
         return []
-
-    # ── Step 2: Team form for each match ──────────────────────────────────────
-    for c in candidates:
-        c["home_form"] = get_team_form(c["home_id"])
-        c["away_form"] = get_team_form(c["away_id"])
 
     # ── Step 3: Fetch Odds API once per unique league ─────────────────────────
     by_odds_key: dict[str, list] = defaultdict(list)
@@ -290,9 +285,6 @@ def scan_all_live(max_tier: int = 2, max_matches: int = 6) -> list:
             "league":      m["league_name"],
             "commence":    "",
             "last_update": "",
-            # form data (available for display/logging)
-            "home_form":   m.get("home_form", {}),
-            "away_form":   m.get("away_form", {}),
             # value outputs
             "value_bets":      [],
             "ht_05_prob":      None,
@@ -358,131 +350,3 @@ def scan_all_live(max_tier: int = 2, max_matches: int = 6) -> list:
         enriched.append(entry)
 
     return enriched
-
-
-def run_live_loop(sport_key: str, interval_seconds: int = 120, max_iterations: int = 30):
-    """
-    Polling loop — ανανεώνει κάθε interval_seconds.
-    Χρησιμοποιεί ~2 requests/iteration (scores + odds).
-    Για 500 free requests/μήνα: max ~250 iterations = ~8 ώρες continuous scanning.
-    """
-    from rich.console import Console
-    from rich.table import Table
-    from rich import box
-    console = Console()
-
-    console.print(f"\n[bold red]LIVE SCANNER[/bold red] — {sport_key}")
-    console.print(f"Polling κάθε [cyan]{interval_seconds}s[/cyan] | Max iterations: {max_iterations}")
-    console.print("Ctrl+C για έξοδο\n")
-
-    iteration = 0
-    try:
-        while iteration < max_iterations:
-            iteration += 1
-            now_str = datetime.now().strftime("%H:%M:%S")
-            console.rule(f"[dim]Scan #{iteration} — {now_str}[/dim]")
-
-            results = scan_once(sport_key)
-
-            if not results:
-                console.print("[yellow]Δεν υπάρχουν in-play αγώνες αυτή τη στιγμή.[/yellow]")
-            else:
-                table = Table(box=box.SIMPLE_HEAVY, show_header=True)
-                table.add_column("Αγώνας", style="bold")
-                table.add_column("Σκορ", justify="center", style="cyan")
-                table.add_column("Λεπτό", justify="center")
-                table.add_column("Live O2.5", justify="right", style="yellow")
-                table.add_column("Best Odds", justify="right")
-                table.add_column("Edge", justify="right")
-                table.add_column("Value?", justify="center")
-
-                for r in results:
-                    score    = f"{r['home_score']}-{r['away_score']}"
-                    minute   = f"{r['minute']}'"
-                    live_p   = f"{r.get('live_over_prob', 0):.1%}" if r.get('live_over_prob') else "—"
-                    vbets    = r.get("value_bets", [])
-                    if vbets:
-                        best  = vbets[0]
-                        odds  = str(best["bookmaker_odds"])
-                        edge  = best["value_edge_pct"]
-                        val   = "[green]VALUE![/green]"
-                    else:
-                        odds, edge, val = "—", "—", "[dim]no[/dim]"
-
-                    table.add_row(
-                        f"{r['home_team']} vs {r['away_team']}",
-                        score, minute, live_p, odds, edge, val
-                    )
-
-                console.print(table)
-
-                # Alerts για value bets (HT + full-game)
-                all_value_alerts = []
-                for r in results:
-                    stats = r.get("live_stats") or {}
-                    sot   = stats.get("shots_ot_total", 0)
-                    stats_str = (
-                        f" | SoT={stats['shots_str']} Corners={stats['corners_str']} "
-                        f"Poss={stats['possession_str']}"
-                        if stats else ""
-                    )
-                    for ht_label, bets_key in [("O0.5 HT", "ht_05_bets"), ("O1.5 HT", "ht_15_bets")]:
-                        for vb in r.get(bets_key, []):
-                            conf = "[bold magenta]HIGH CONF![/bold magenta]" if sot >= 3 else "[bold yellow]⚡ HT VALUE[/bold yellow]"
-                            console.print(
-                                f"{conf}: "
-                                f"{r['home_team']} vs {r['away_team']} [{r['minute']}'] "
-                                f"{ht_label} @ [yellow]{vb['bookmaker_odds']}[/yellow] "
-                                f"({vb['bookmaker']}) | edge=[green]{vb['value_edge_pct']}[/green]"
-                                f"{stats_str}"
-                            )
-                for r in results:
-                    stats = r.get("live_stats") or {}
-                    sot   = stats.get("shots_ot_total", 0)
-                    stats_str = (
-                        f" | SoT={stats['shots_str']} Corners={stats['corners_str']} "
-                        f"Poss={stats['possession_str']}"
-                        if stats else ""
-                    )
-                    for vb in r.get("value_bets", []):
-                        conf = "[bold magenta]★ HIGH CONF![/bold magenta]" if sot >= 3 else "[bold green]>>> VALUE BET[/bold green]"
-                        console.print(
-                            f"{conf}: "
-                            f"{r['home_team']} vs {r['away_team']} [{r['minute']}'] "
-                            f"Over 2.5 @ [yellow]{vb['bookmaker_odds']}[/yellow] "
-                            f"({vb['bookmaker']}) | edge=[green]{vb['value_edge_pct']}[/green]"
-                            f"{stats_str}"
-                        )
-                        # Auto-track στη DB
-                        try:
-                            from utils.database import track_value_bet
-                            from models.value_calculator import kelly_criterion
-                            kelly = kelly_criterion(
-                                r.get("live_over_prob", 0.5),
-                                vb["bookmaker_odds"],
-                                float(os.getenv("BANKROLL", "1000"))
-                            )
-                            bet_id = track_value_bet(
-                                value_result = vb,
-                                kelly_result = kelly,
-                                match_info   = {
-                                    "event_id":   r.get("id", ""),
-                                    "match_date": r.get("commence", "")[:10],
-                                    "home_team":  r["home_team"],
-                                    "away_team":  r["away_team"],
-                                    "bet_type":   "Over 2.5",
-                                },
-                                league     = sport_key,
-                                is_live    = True,
-                                live_minute= r.get("minute"),
-                            )
-                            if bet_id > 0:
-                                console.print(f"  [dim]DB: tracked as #{bet_id}[/dim]")
-                        except Exception as db_err:
-                            console.print(f"  [dim]DB tracking error: {db_err}[/dim]")
-
-            console.print(f"[dim]Επόμενο scan σε {interval_seconds}s...[/dim]")
-            time.sleep(interval_seconds)
-
-    except KeyboardInterrupt:
-        console.print("\n[dim]Live scanner διακόπηκε.[/dim]")

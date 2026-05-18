@@ -326,6 +326,10 @@ def auto_settle_from_api(sport_key: str = None) -> dict:
 
     settled = skipped = errors = 0
     for bet in pending:
+        # HT bets require the half-time score — cannot be settled from FT data
+        if " HT" in bet["bet_type"]:
+            skipped += 1
+            continue
         key = (bet["home_team"].lower(), bet["away_team"].lower())
         res = results_by_teams.get(key)
         if not res:

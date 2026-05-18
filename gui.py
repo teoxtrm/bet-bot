@@ -373,6 +373,10 @@ class PregameFrame(ctk.CTkFrame):
                             "kelly": kelly["suggested_bet"],
                             "is_value": best["is_value_bet"],
                             "value_result": best, "kelly_result": kelly,
+                            # flat copies survive scan_cache stripping of "event"
+                            "home_team": ev["home_team"],
+                            "away_team": ev["away_team"],
+                            "event_id":  ev.get("id", ""),
                         }
                         _rows.append(row)
                         if best["is_value_bet"]:
@@ -590,14 +594,22 @@ class PregameFrame(ctk.CTkFrame):
         from utils.database import track_value_bet
         tracked = 0
         for r in self._results:
+            event    = r.get("event") or {}
+            value_r  = r.get("value_result") or {
+                "our_probability": r["prob"],
+                "bookmaker":       r["bookmaker"],
+                "bookmaker_odds":  r["odds"],
+                "value_edge":      r["edge"],
+            }
+            kelly_r  = r.get("kelly_result") or {"suggested_bet": r["kelly"]}
             bid = track_value_bet(
-                value_result = r["value_result"],
-                kelly_result = r["kelly_result"],
+                value_result = value_r,
+                kelly_result = kelly_r,
                 match_info   = {
-                    "event_id":   r["event"].get("id", ""),
+                    "event_id":   event.get("id") or r.get("event_id", ""),
                     "match_date": r["date"],
-                    "home_team":  r["event"]["home_team"],
-                    "away_team":  r["event"]["away_team"],
+                    "home_team":  event.get("home_team") or r.get("home_team", ""),
+                    "away_team":  event.get("away_team") or r.get("away_team", ""),
                     "bet_type":   r["market"],
                 },
                 league = r["league"],
@@ -1364,6 +1376,21 @@ class HistoryFrame(ctk.CTkFrame):
         ctk.CTkLabel(score_row, text="Φιλοξενούμενου:").pack(side="left")
         away_ent = ctk.CTkEntry(score_row, width=60, font=ctk.CTkFont(size=14))
         away_ent.pack(side="left", padx=8)
+
+        ht_note = ctk.CTkLabel(dlg, text="", font=ctk.CTkFont(size=11), text_color=C_DIM)
+        ht_note.pack()
+
+        def _on_bet_select(*_):
+            sel = bet_var.get()
+            bid_str = sel.split()[0].replace("#", "")
+            b = next((x for x in pending if str(x["id"]) == bid_str), None)
+            if b and " HT" in b["bet_type"]:
+                ht_note.configure(text="Για HT bet — εισάγε το σκορ 1ου ημιχρόνου")
+            else:
+                ht_note.configure(text="")
+
+        combo.configure(command=_on_bet_select)
+        _on_bet_select()
 
         result_lbl = ctk.CTkLabel(dlg, text="", font=ctk.CTkFont(size=13))
         result_lbl.pack(pady=6)

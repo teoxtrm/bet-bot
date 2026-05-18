@@ -1644,4 +1644,83 @@ if __name__ == "__main__":
     from utils.database import init_db
     init_db()
     app = App()
+
+    # ── First-run setup wizard (runs before main window is usable) ────────────
+    try:
+        from setup_wizard import run_if_needed
+        run_if_needed(app)
+        # Reload .env so keys picked up in wizard are visible to the rest of the app
+        load_dotenv(override=True)
+    except ImportError:
+        pass   # setup_wizard not present in dev without the file
+    except Exception as e:
+        _log_error("setup_wizard", e)
+
+    # ── Update check (non-blocking, runs in background) ───────────────────────
+    def _check_update_bg():
+        try:
+            from updater import check_for_update, download_update, restart_app, get_local_version
+            available, local_ver, remote_ver = check_for_update()
+            if not available:
+                return
+
+            def _show_update_prompt():
+                answer = messagebox.askyesno(
+                    "BetBot Update Available",
+                    f"A new version is available!\n\n"
+                    f"  Current:  v{local_ver}\n"
+                    f"  New:      v{remote_ver}\n\n"
+                    f"Download and apply update now?\n"
+                    f"(The app will restart automatically)",
+                    parent=app,
+                )
+                if not answer:
+                    return
+
+                # Show progress window
+                prog_win = ctk.CTkToplevel(app)
+                prog_win.title("Updating BetBot...")
+                prog_win.geometry("400x160")
+                prog_win.resizable(False, False)
+                prog_win.grab_set()
+                prog_win.configure(fg_color="#1a1a2e")
+                ctk.CTkLabel(prog_win, text=f"Downloading update v{remote_ver}...",
+                             font=("Segoe UI", 13)).pack(pady=(24, 8))
+                progress = ctk.CTkProgressBar(prog_win, width=340)
+                progress.pack(pady=4)
+                progress.set(0)
+                file_lbl = ctk.CTkLabel(prog_win, text="",
+                                        font=("Segoe UI", 10), text_color="#888")
+                file_lbl.pack()
+
+                def _progress_cb(cur, total, fname):
+                    progress.set(cur / total)
+                    file_lbl.configure(text=fname)
+                    prog_win.update()
+
+                import threading
+                def _do_download():
+                    ok, err = download_update(progress_cb=_progress_cb)
+                    prog_win.destroy()
+                    if ok:
+                        messagebox.showinfo("Update Complete",
+                                            f"Updated to v{remote_ver}.\nBetBot will now restart.")
+                        restart_app()
+                    else:
+                        messagebox.showerror("Update Failed",
+                                             f"Some files could not be updated:\n{err}\n\n"
+                                             f"The app will continue with the current version.")
+
+                threading.Thread(target=_do_download, daemon=True).start()
+
+            app.after(2000, _show_update_prompt)   # wait 2s for main window to settle
+
+        except ImportError:
+            pass   # updater.py not present
+        except Exception as e:
+            _log_error("update_check", e)
+
+    import threading as _threading
+    _threading.Thread(target=_check_update_bg, daemon=True).start()
+
     app.mainloop()

@@ -1,0 +1,169 @@
+{
+  "version": "1.0.0",
+  "files": [
+    {
+      "path": "config.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/config.py",
+      "sha256": "6d6c478ed44aa18be0b0db4e721d8b844ec5198578f793ac1f5ff7ba286456fa",
+      "size": 1261
+    },
+    {
+      "path": "gui.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/gui.py",
+      "sha256": "a4d98f344d5b8b0080d0592b9618dbb872984df03678bb21e58e4c87f2a3083f",
+      "size": 83682
+    },
+    {
+      "path": "main.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/main.py",
+      "sha256": "124375884965bf55612010d834490aff365c0b9a58eca39a2b782add78c86544",
+      "size": 28351
+    },
+    {
+      "path": "setup_wizard.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/setup_wizard.py",
+      "sha256": "38dd61ad2ec7535a839399b0a8fa911434d6e430140773b6a9b75a701a6d6596",
+      "size": 8638
+    },
+    {
+      "path": "updater.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/updater.py",
+      "sha256": "b933955076b815c0042fdd03f545b3c3e850e30cd6d6e052a0bf1d5340e733f4",
+      "size": 3979
+    },
+    {
+      "path": "version.txt",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/version.txt",
+      "sha256": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
+      "size": 6
+    },
+    {
+      "path": "models/__init__.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/models/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "models/live_model.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/models/live_model.py",
+      "sha256": "638eaaa596537a073ea05e208ef614476b044e81a8410cbf9992725c441fc612",
+      "size": 4767
+    },
+    {
+      "path": "models/live_targets.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/models/live_targets.py",
+      "sha256": "39864ef6b80e02781fbc626e6010aacb30cd2b7b083d0dfd4ec07b75ac801f8e",
+      "size": 10861
+    },
+    {
+      "path": "models/pregame_model.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/models/pregame_model.py",
+      "sha256": "bac24435f45ea1a2d55980df02f9ec6d2e0afd0452f765c43f8446fa5ddefd81",
+      "size": 3418
+    },
+    {
+      "path": "models/tipster.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/models/tipster.py",
+      "sha256": "b8a412314e22bb6b9c9e7e413c2a4e85b9f62e3569f3925454bd922597af1fdb",
+      "size": 16929
+    },
+    {
+      "path": "models/value_calculator.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/models/value_calculator.py",
+      "sha256": "2be6628d96b02188a30ea712e9595c055637c7f8d8814ef660ff09cc885f92f7",
+      "size": 3112
+    },
+    {
+      "path": "models/watchlist.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/models/watchlist.py",
+      "sha256": "dd4d670da699eaaec987b6992be2f40f48648b4b7c3dc22b844406b22f61cb54",
+      "size": 6374
+    },
+    {
+      "path": "scrapers/__init__.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "scrapers/apifootball.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/apifootball.py",
+      "sha256": "82a5ec4ac98c7d576816d31926f581b542e6a59a4afc563ea78abdf4e0182c42",
+      "size": 8978
+    },
+    {
+      "path": "scrapers/football_data.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/football_data.py",
+      "sha256": "ae09950fed7334d66067f0e5236cd54f4de27a7f4e3986900cb1fee54517ba97",
+      "size": 5469
+    },
+    {
+      "path": "scrapers/greek_stats.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/greek_stats.py",
+      "sha256": "ed7c8315a6386bdb1b7079861060328792336ab32b90651fd415e3a5c44eedb9",
+      "size": 4802
+    },
+    {
+      "path": "scrapers/live_scanner.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/live_scanner.py",
+      "sha256": "477a11f4896b16612bb9f6220bf92dd9f8353337706004bc61c8159e7258d3a5",
+      "size": 21449
+    },
+    {
+      "path": "scrapers/odds_api.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/odds_api.py",
+      "sha256": "b944ec41c4f9d9cef99f6ca01ff16395b95d6b0eff81cff23c4712329c7d63a5",
+      "size": 17061
+    },
+    {
+      "path": "scrapers/odds_scraper.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/odds_scraper.py",
+      "sha256": "353a06645af3129d4be241944572daaf824c464f7cc6da407538e8b6efe6ec50",
+      "size": 2414
+    },
+    {
+      "path": "scrapers/sofascore.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/scrapers/sofascore.py",
+      "sha256": "6b106ab334edadeb70c8be9f6040c304a7eb23aa3c4efd7e9eebaf8e906277c7",
+      "size": 4484
+    },
+    {
+      "path": "utils/__init__.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "path": "utils/dashboard.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/dashboard.py",
+      "sha256": "92c2ff4a8de7e2813700a308e7dc507464bfeb1fd51d44b2e83472629201e0c9",
+      "size": 8578
+    },
+    {
+      "path": "utils/database.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/database.py",
+      "sha256": "aee83a37f7556c10ba5d09ec6efda2ad6d256f164ab0e6c6302a79170d6e12b3",
+      "size": 14631
+    },
+    {
+      "path": "utils/helpers.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/helpers.py",
+      "sha256": "7055fa004bf5fcc83412f8161391504998af5f7d30a3c8fc385c0522737e4eb8",
+      "size": 2837
+    },
+    {
+      "path": "utils/league_map.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/league_map.py",
+      "sha256": "276e2f00bead42a290753edce3fa9ade50d9842369119a7e02fcacc45dc3c543",
+      "size": 4549
+    },
+    {
+      "path": "utils/scan_cache.py",
+      "url": "https://raw.githubusercontent.com/teoxtrm/bet-bot/main/utils/scan_cache.py",
+      "sha256": "6dc17e0f8aa0df7e994d4d8e86943d8d5cce7d1311abbc084b1c4b23a6b345e7",
+      "size": 3775
+    }
+  ],
+  "total_files": 27,
+  "total_bytes": 270405
+}

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BetBot {% block title %}{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/style.css"/>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            bg:      '#0f0f1a',
+            card:    '#16213e',
+            sidebar: '#0d0d1a',
+            accent:  '#1f538d',
+            green:   '#00b894',
+            red:     '#d63031',
+            yellow:  '#fdcb6e',
+            dim:     '#636e72',
+            muted:   '#2d2d50',
+          },
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-bg text-gray-100 font-sans min-h-screen flex">
+
+  <!-- Sidebar -->
+  <aside class="w-16 md:w-48 bg-sidebar flex flex-col py-4 shrink-0 border-r border-muted">
+    <div class="px-3 mb-6 hidden md:block">
+      <span class="text-white font-bold text-lg">⚽ BetBot</span>
+      <div id="version-badge" class="text-dim text-xs mt-0.5"></div>
+    </div>
+    <div class="md:hidden px-3 mb-6 text-center text-lg">⚽</div>
+
+    <nav class="flex flex-col gap-1 flex-1">
+      {% set nav = [
+        ('/pregame',  '🔍', 'Pre-game'),
+        ('/live',     '📡', 'Live'),
+        ('/tipster',  '🤖', 'Tipster'),
+        ('/history',  '📊', 'History'),
+      ] %}
+      {% for href, icon, label in nav %}
+      <a href="{{ href }}"
+         class="flex items-center gap-3 px-3 py-2.5 rounded-lg mx-2 transition-colors
+                {% if request.url.path == href %}bg-accent text-white{% else %}text-dim hover:text-white hover:bg-muted{% endif %}">
+        <span class="text-lg w-6 text-center">{{ icon }}</span>
+        <span class="hidden md:block text-sm font-medium">{{ label }}</span>
+      </a>
+      {% endfor %}
+    </nav>
+
+    <!-- PnL sidebar -->
+    <div class="mx-2 mt-4 p-2 bg-card rounded-lg hidden md:block">
+      <div class="text-dim text-xs mb-1">PnL</div>
+      <div id="sidebar-pnl" class="text-sm font-bold text-green">—</div>
+      <div id="sidebar-pending" class="text-dim text-xs mt-0.5"></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0 flex flex-col">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script>
+    // Version
+    fetch('/api/version').then(r=>r.json()).then(d=>{
+      const el = document.getElementById('version-badge');
+      if (el) el.textContent = 'v' + d.version;
+    }).catch(()=>{});
+
+    // Sidebar PnL
+    function refreshSidebar() {
+      fetch('/api/history/stats').then(r=>r.json()).then(d=>{
+        const pnl = document.getElementById('sidebar-pnl');
+        const pen = document.getElementById('sidebar-pending');
+        if (pnl) {
+          const v = d.total_pnl || 0;
+          pnl.textContent = (v >= 0 ? '+' : '') + v.toFixed(2) + ' €';
+          pnl.className = 'text-sm font-bold ' + (v >= 0 ? 'text-green' : 'text-red');
+        }
+        if (pen && d.pending) pen.textContent = d.pending + ' pending';
+      }).catch(()=>{});
+    }
+    refreshSidebar();
+    setInterval(refreshSidebar, 30000);
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

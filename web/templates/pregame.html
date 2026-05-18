@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}— Pre-game{% endblock %}
+
+{% block content %}
+<div class="p-4 md:p-6 flex flex-col gap-4 h-full overflow-y-auto">
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-center gap-3">
+    <h1 class="text-xl font-bold">Pre-game Value Scanner</h1>
+    <span id="scan-status-text" class="text-dim text-sm"></span>
+  </div>
+
+  <!-- Controls -->
+  <div class="flex flex-wrap items-center gap-3 bg-card rounded-xl p-3">
+    <select id="league-select" class="bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
+      <option value="TIER 1 ONLY">TIER 1 ONLY</option>
+    </select>
+    <button id="btn-scan"
+      class="bg-accent hover:bg-blue-700 text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors">
+      🔍 SCAN
+    </button>
+    <button id="btn-track" disabled
+      class="bg-emerald-800 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed
+             text-white font-semibold px-5 py-2 rounded-lg text-sm transition-colors">
+      💾 Track Value Bets
+    </button>
+    <label class="flex items-center gap-2 text-sm text-dim ml-2">
+      <input type="checkbox" id="clear-cache-cb" class="accent-accent"/> Clear cache
+    </label>
+    <!-- Progress bar -->
+    <div id="scan-progress-wrap" class="hidden w-full mt-1">
+      <div class="w-full bg-muted rounded-full h-1">
+        <div id="scan-progress-bar" class="bg-accent h-1 rounded-full transition-all" style="width:0%"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Value Bets Table -->
+  <div class="bg-card rounded-xl overflow-hidden flex-1">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-muted text-blue-300 uppercase text-xs">
+          <tr>
+            <th class="px-3 py-3 text-left">Αγώνας</th>
+            <th class="px-3 py-3 text-center">Ημ/νία</th>
+            <th class="px-3 py-3 text-center">Αγορά</th>
+            <th class="px-3 py-3 text-center">Πιθ.</th>
+            <th class="px-3 py-3 text-center">Bookmaker</th>
+            <th class="px-3 py-3 text-center">Απόδοση</th>
+            <th class="px-3 py-3 text-center">Edge</th>
+            <th class="px-3 py-3 text-center">Kelly</th>
+          </tr>
+        </thead>
+        <tbody id="pregame-tbody">
+          <tr><td colspan="8" class="text-center text-dim py-12">Πάτα SCAN για αποτελέσματα</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Live Targets -->
+  <div class="bg-card rounded-xl overflow-hidden">
+    <div class="px-4 py-3 border-b border-muted flex items-center gap-2">
+      <span class="text-yellow font-semibold">⚡ Σημερινά Live Targets</span>
+      <span class="text-dim text-xs">— αγώνες να παρακολουθήσεις στο Live Monitor</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-muted text-blue-300 uppercase text-xs">
+          <tr>
+            <th class="px-3 py-2 text-center">Priority</th>
+            <th class="px-3 py-2 text-left">Αγώνας</th>
+            <th class="px-3 py-2 text-center">Τύπος</th>
+            <th class="px-3 py-2 text-center">Πιθ.</th>
+            <th class="px-3 py-2 text-center">Απόδοση</th>
+            <th class="px-3 py-2 text-left">Οδηγία</th>
+          </tr>
+        </thead>
+        <tbody id="targets-tbody">
+          <tr><td colspan="6" class="text-center text-dim py-6">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Load leagues
+fetch('/api/leagues').then(r=>r.json()).then(d=>{
+  const sel = document.getElementById('league-select');
+  sel.innerHTML = d.leagues.map(l=>`<option value="${l}">${l.replace(/_/g,' ').toUpperCase()}</option>`).join('');
+  sel.value = 'TIER 1 ONLY';
+}).catch(()=>{});
+
+// Restore cached results
+fetch('/api/scan/results').then(r=>r.json()).then(d=>{
+  if (d.rows && d.rows.length) {
+    renderPregame(d.rows, d.value_count);
+    renderTargets(d.targets || []);
+  }
+}).catch(()=>{});
+
+// Scan button
+document.getElementById('btn-scan').addEventListener('click', ()=>{
+  const league = document.getElementById('league-select').value;
+  const clear  = document.getElementById('clear-cache-cb').checked;
+  fetch('/api/scan/start', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({league, clear_cache: clear}),
+  }).then(r=>r.json()).then(()=>{
+    document.getElementById('btn-scan').disabled = true;
+    document.getElementById('btn-scan').textContent = '⏳ Scanning...';
+    document.getElementById('scan-progress-wrap').classList.remove('hidden');
+    document.getElementById('btn-track').disabled = true;
+  }).catch(e=>alert('Error: '+e));
+});
+
+// Track button
+document.getElementById('btn-track').addEventListener('click', ()=>{
+  fetch('/api/scan/track', {method:'POST'}).then(r=>r.json()).then(d=>{
+    alert(`✓ ${d.tracked} value bets αποθηκεύτηκαν!`);
+  }).catch(e=>alert('Error: '+e));
+});
+
+// WebSocket updates
+connectWS(msg => {
+  if (msg.type === 'scan_status') {
+    document.getElementById('scan-status-text').textContent = msg.data.text;
+    document.getElementById('scan-progress-bar').style.width = (msg.data.progress * 100) + '%';
+  }
+  if (msg.type === 'scan_done') {
+    document.getElementById('btn-scan').disabled = false;
+    document.getElementById('btn-scan').textContent = '🔍 SCAN';
+    document.getElementById('scan-progress-wrap').classList.add('hidden');
+    document.getElementById('scan-status-text').textContent = msg.data.text;
+    if (msg.results) {
+      renderPregame(msg.results.rows || [], msg.results.value_count || 0);
+      renderTargets(msg.results.targets || []);
+      if (msg.results.value_count > 0)
+        document.getElementById('btn-track').disabled = false;
+    }
+  }
+  if (msg.type === 'scan_error') {
+    document.getElementById('btn-scan').disabled = false;
+    document.getElementById('btn-scan').textContent = '🔍 SCAN';
+    document.getElementById('scan-status-text').textContent = '❌ ' + msg.error;
+  }
+});
+
+function renderPregame(rows, valueCount) {
+  const tbody = document.getElementById('pregame-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-dim py-12">Δεν βρέθηκαν αποτελέσματα</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((r,i) => {
+    const isValue = r.is_value;
+    const rowCls  = isValue ? 'text-green font-semibold' : (i%2===0 ? '' : 'bg-white/5');
+    const edge    = (r.edge * 100).toFixed(1);
+    const edgeCls = r.edge > 0 ? 'text-green' : 'text-red';
+    return `<tr class="${rowCls} hover:bg-white/5 border-b border-muted/30">
+      <td class="px-3 py-2.5">${r.match}</td>
+      <td class="px-3 py-2.5 text-center text-dim">${r.date}</td>
+      <td class="px-3 py-2.5 text-center">${r.market}</td>
+      <td class="px-3 py-2.5 text-center">${(r.prob*100).toFixed(1)}%</td>
+      <td class="px-3 py-2.5 text-center">${r.bookmaker}</td>
+      <td class="px-3 py-2.5 text-center font-mono">${r.odds}</td>
+      <td class="px-3 py-2.5 text-center font-mono ${edgeCls}">${edge > 0 ? '+' : ''}${edge}%</td>
+      <td class="px-3 py-2.5 text-center">${isValue ? '€'+r.kelly.toFixed(2) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderTargets(targets) {
+  const tbody = document.getElementById('targets-tbody');
+  if (!targets.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-dim py-6">—</td></tr>';
+    return;
+  }
+  tbody.innerHTML = targets.slice(0,8).map(t => {
+    const prioCls = t.priority===1 ? 'text-red font-bold' : 'text-yellow';
+    const prioTxt = t.priority===1 ? '🔴 HIGH' : '🟡 MED';
+    return `<tr class="border-b border-muted/30 hover:bg-white/5">
+      <td class="px-3 py-2 text-center ${prioCls}">${prioTxt}</td>
+      <td class="px-3 py-2">${t.home_team} vs ${t.away_team}</td>
+      <td class="px-3 py-2 text-center text-xs text-dim">${(t.target_type||'').replace(/_/g,' ')}</td>
+      <td class="px-3 py-2 text-center">${t.probability ? (t.probability*100).toFixed(1)+'%' : '—'}</td>
+      <td class="px-3 py-2 text-center font-mono">${t.best_odds || '—'}</td>
+      <td class="px-3 py-2 text-xs text-dim">${t.action || ''}</td>
+    </tr>`;
+  }).join('');
+}
+</script>
+{% endblock %}

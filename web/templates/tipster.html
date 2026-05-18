@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}— AI Tipster{% endblock %}
+
+{% block content %}
+<div class="p-4 md:p-6 flex flex-col gap-4 overflow-y-auto">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-xl font-bold">🤖 AI Tipster</h1>
+    <span id="tipster-date" class="text-dim text-sm"></span>
+  </div>
+
+  <div id="no-picks" class="text-center text-dim py-12">
+    Εκτέλεσε Pre-game Scan για να δεις τα picks
+  </div>
+
+  <!-- Singles -->
+  <div id="singles-section" class="hidden">
+    <h2 class="text-sm font-semibold text-dim uppercase mb-3">Singles</h2>
+    <div id="singles-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+  </div>
+
+  <!-- Combos -->
+  <div id="combos-section" class="hidden mt-2">
+    <h2 class="text-sm font-semibold text-dim uppercase mb-3">Combos</h2>
+    <div id="combos-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+  </div>
+
+  <!-- Watchlist -->
+  <div id="watchlist-section" class="hidden mt-4">
+    <div class="flex items-center gap-2 mb-3">
+      <h2 class="text-sm font-semibold text-dim uppercase">👁 Watch Live Today</h2>
+      <span class="text-dim text-xs">— αγώνες με υψηλό HT betting potential</span>
+    </div>
+    <div id="watchlist-strip" class="flex gap-3 overflow-x-auto pb-2"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+fetch('/api/tipster/picks').then(r=>r.json()).then(d=>{
+  if (d.scan_date) {
+    document.getElementById('tipster-date').textContent = 'Scan: ' + d.scan_date;
+  }
+  renderPicks(d.picks || [], d.watchlist || []);
+}).catch(()=>{});
+
+connectWS(msg => {
+  if (msg.type === 'scan_done' && msg.results) {
+    fetch('/api/tipster/picks').then(r=>r.json()).then(d=>{
+      renderPicks(d.picks || [], d.watchlist || []);
+      if (d.scan_date) document.getElementById('tipster-date').textContent = 'Scan: ' + d.scan_date;
+    }).catch(()=>{});
+  }
+});
+
+function tierColors(tier) {
+  const t = (tier||'').toUpperCase();
+  if (t.includes('LOCK'))   return { bg: 'bg-green/10 border-green',  badge: 'bg-green text-black',   label: '🔒 LOCK' };
+  if (t.includes('STRONG')) return { bg: 'bg-blue-500/10 border-blue-400', badge: 'bg-blue-500 text-white', label: '💪 STRONG' };
+  if (t.includes('COMBO'))  return { bg: 'bg-orange-500/10 border-orange-400', badge: 'bg-orange-500 text-white', label: '🔗 COMBO' };
+  return { bg: 'bg-yellow/10 border-yellow', badge: 'bg-yellow text-black', label: '💡 VALUE PLAY' };
+}
+
+function pickCard(p) {
+  const tc = tierColors(p.tier);
+  const conf = p.confidence != null ? (p.confidence*100).toFixed(0)+'%' : '';
+  const signals = (p.signals || []).slice(0,3).map(s=>`<span class="text-xs bg-muted px-2 py-0.5 rounded-full text-dim">${s}</span>`).join('');
+  const legs = p.legs || (p.label ? [p.label] : []);
+  return `<div class="bg-card border ${tc.bg} rounded-xl p-4 flex flex-col gap-3">
+    <div class="flex items-center justify-between">
+      <span class="text-xs px-2 py-0.5 rounded-full font-bold ${tc.badge}">${tc.label}</span>
+      <span class="text-lg font-bold text-white">${conf}</span>
+    </div>
+    <div class="font-semibold text-sm">${p.match || ''}</div>
+    <div class="space-y-1">
+      ${legs.map(l=>`<div class="text-sm text-green">✓ ${l}</div>`).join('')}
+    </div>
+    <div class="flex flex-wrap gap-1">${signals}</div>
+    <div class="flex items-center justify-between text-xs text-dim mt-1">
+      <span>${p.bookmaker || ''}</span>
+      <span class="font-mono font-bold text-white">${p.best_odds || ''}</span>
+    </div>
+  </div>`;
+}
+
+function renderPicks(picks, watchlist) {
+  const singles = picks.filter(p => !(p.tier||'').toUpperCase().includes('COMBO'));
+  const combos  = picks.filter(p =>  (p.tier||'').toUpperCase().includes('COMBO'));
+
+  if (!picks.length && !watchlist.length) {
+    document.getElementById('no-picks').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('no-picks').classList.add('hidden');
+
+  if (singles.length) {
+    document.getElementById('singles-section').classList.remove('hidden');
+    document.getElementById('singles-grid').innerHTML = singles.map(pickCard).join('');
+  }
+  if (combos.length) {
+    document.getElementById('combos-section').classList.remove('hidden');
+    document.getElementById('combos-grid').innerHTML = combos.map(pickCard).join('');
+  }
+
+  if (watchlist.length) {
+    document.getElementById('watchlist-section').classList.remove('hidden');
+    document.getElementById('watchlist-strip').innerHTML = watchlist.map(g => {
+      const rating = (g.rating||'').toUpperCase();
+      const badgeCls = rating.includes('MUST') ? 'bg-red text-white' :
+                       rating.includes('WATCH') ? 'bg-yellow text-black' : 'bg-muted text-dim';
+      return `<div class="bg-card border border-muted rounded-xl p-3 min-w-[180px] shrink-0">
+        <div class="text-xs font-bold px-2 py-0.5 rounded-full inline-block mb-2 ${badgeCls}">${rating}</div>
+        <div class="text-sm font-semibold">${g.home_team} vs ${g.away_team}</div>
+        <div class="text-xs text-dim mt-1">${g.kickoff || ''}</div>
+        <div class="text-xs text-dim mt-1">HT O0.5: ${g.ht_prob != null ? (g.ht_prob*100).toFixed(0)+'%' : '—'}</div>
+        <div class="text-xs text-dim">O2.5: ${g.over25_prob != null ? (g.over25_prob*100).toFixed(0)+'%' : '—'}</div>
+      </div>`;
+    }).join('');
+  }
+}
+</script>
+{% endblock %}

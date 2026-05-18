@@ -1,0 +1,30 @@
+/* BetBot custom styles */
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #1a1a2e; }
+::-webkit-scrollbar-thumb { background: #2d2d50; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3d3d60; }
+
+/* Table */
+table { border-collapse: collapse; }
+th { white-space: nowrap; }
+
+/* Animate pulse for LIVE badge */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
+/* Mobile: hide non-essential columns on small screens */
+@media (max-width: 640px) {
+  .hide-mobile { display: none; }
+}

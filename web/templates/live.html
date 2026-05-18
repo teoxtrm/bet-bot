@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}— Live{% endblock %}
+
+{% block content %}
+<div class="p-4 md:p-6 flex flex-col gap-4 h-full overflow-y-auto">
+
+  <!-- Header -->
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <h1 class="text-xl font-bold">📡 Live Monitor</h1>
+      <span id="live-badge" class="hidden text-xs bg-red/20 text-red px-2 py-0.5 rounded-full animate-pulse">● LIVE</span>
+    </div>
+    <div id="live-status-text" class="text-dim text-sm"></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="bg-card rounded-xl p-3 flex flex-wrap items-center gap-3">
+    <!-- Mode -->
+    <select id="live-mode" class="bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
+      <option value="auto">Auto (All Leagues)</option>
+      <option value="manual">Manual (select league)</option>
+    </select>
+
+    <!-- Manual league (hidden by default) -->
+    <select id="live-league" class="hidden bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
+    </select>
+
+    <!-- Max tier -->
+    <select id="live-tier" class="bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
+      <option value="1">Max Tier 1</option>
+      <option value="2" selected>Max Tier 2</option>
+      <option value="3">Max Tier 3</option>
+    </select>
+
+    <!-- Interval -->
+    <div class="flex items-center gap-2">
+      <label class="text-dim text-sm">Interval:</label>
+      <input id="live-interval" type="number" value="120" min="30" max="600"
+        class="bg-muted text-white rounded-lg px-3 py-2 text-sm w-20 border border-muted focus:outline-none"/>
+      <span class="text-dim text-sm">sec</span>
+    </div>
+
+    <button id="btn-live-start"
+      class="bg-green/20 hover:bg-green/30 border border-green text-green font-semibold px-5 py-2 rounded-lg text-sm transition-colors">
+      ▶ Start
+    </button>
+    <button id="btn-live-stop" disabled
+      class="bg-red/20 hover:bg-red/30 border border-red text-red disabled:opacity-40 disabled:cursor-not-allowed
+             font-semibold px-5 py-2 rounded-lg text-sm transition-colors">
+      ■ Stop
+    </button>
+    <button id="btn-live-clear"
+      class="text-dim hover:text-white border border-muted px-4 py-2 rounded-lg text-sm transition-colors">
+      Clear
+    </button>
+
+    <div class="text-dim text-xs ml-auto" id="live-iter"></div>
+  </div>
+
+  <!-- Live Table -->
+  <div class="bg-card rounded-xl overflow-hidden flex-1">
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-muted text-blue-300 uppercase text-xs">
+          <tr>
+            <th class="px-3 py-3 text-center">Ώρα</th>
+            <th class="px-3 py-3 text-left">Αγώνας</th>
+            <th class="px-3 py-3 text-center">Σκορ</th>
+            <th class="px-3 py-3 text-center">λεπτό</th>
+            <th class="px-3 py-3 text-center">Αγορά</th>
+            <th class="px-3 py-3 text-center">Live Prob</th>
+            <th class="px-3 py-3 text-center">SoT</th>
+            <th class="px-3 py-3 text-center">Corners</th>
+            <th class="px-3 py-3 text-center">Poss%</th>
+            <th class="px-3 py-3 text-center">Bookmaker</th>
+            <th class="px-3 py-3 text-center">Odds</th>
+            <th class="px-3 py-3 text-center">Edge</th>
+            <th class="px-3 py-3 text-center">Status</th>
+          </tr>
+        </thead>
+        <tbody id="live-tbody">
+          <tr><td colspan="13" class="text-center text-dim py-12">Πάτα Start για να ξεκινήσει η παρακολούθηση</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="bg-card rounded-xl p-3">
+    <div class="text-dim text-xs mb-1 font-semibold uppercase">Log</div>
+    <div id="live-log" class="text-xs text-dim font-mono h-24 overflow-y-auto space-y-0.5"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Load leagues for manual mode
+fetch('/api/leagues').then(r=>r.json()).then(d=>{
+  const sel = document.getElementById('live-league');
+  // skip tier/all options
+  d.leagues.filter(l=>!l.startsWith('ALL')&&!l.startsWith('TIER')).forEach(l=>{
+    const opt = document.createElement('option');
+    opt.value = l; opt.textContent = l.replace(/_/g,' ').toUpperCase();
+    sel.appendChild(opt);
+  });
+}).catch(()=>{});
+
+document.getElementById('live-mode').addEventListener('change', function(){
+  document.getElementById('live-league').classList.toggle('hidden', this.value !== 'manual');
+  document.getElementById('live-tier').classList.toggle('hidden', this.value === 'manual');
+});
+
+document.getElementById('btn-live-start').addEventListener('click', ()=>{
+  const mode     = document.getElementById('live-mode').value;
+  const tier     = parseInt(document.getElementById('live-tier').value);
+  const interval = parseInt(document.getElementById('live-interval').value) || 120;
+  const sk       = mode === 'manual' ? document.getElementById('live-league').value : '';
+  fetch('/api/live/start', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({mode, sport_key: sk, interval, max_tier: tier}),
+  }).then(r=>r.json()).then(()=>{
+    document.getElementById('btn-live-start').disabled = true;
+    document.getElementById('btn-live-stop').disabled  = false;
+    document.getElementById('live-badge').classList.remove('hidden');
+    logLine('▶ Scan started');
+  }).catch(e=>alert('Error: '+e));
+});
+
+document.getElementById('btn-live-stop').addEventListener('click', ()=>{
+  fetch('/api/live/stop', {method:'POST'}).then(()=>{
+    document.getElementById('btn-live-start').disabled = false;
+    document.getElementById('btn-live-stop').disabled  = true;
+    document.getElementById('live-badge').classList.add('hidden');
+    logLine('■ Scan stopped');
+  }).catch(()=>{});
+});
+
+document.getElementById('btn-live-clear').addEventListener('click', ()=>{
+  document.getElementById('live-tbody').innerHTML =
+    '<tr><td colspan="13" class="text-center text-dim py-12">—</td></tr>';
+  document.getElementById('live-log').innerHTML = '';
+});
+
+function logLine(txt) {
+  const log = document.getElementById('live-log');
+  const d = document.createElement('div');
+  d.textContent = new Date().toLocaleTimeString() + '  ' + txt;
+  log.prepend(d);
+  while (log.children.length > 100) log.removeChild(log.lastChild);
+}
+
+connectWS(msg => {
+  if (msg.type === 'live_update') {
+    renderLive(msg.data || []);
+    const iter = document.getElementById('live-iter');
+    if (iter) iter.textContent = `Scan #${msg.iteration}  ${msg.ts||''}`;
+    logLine(`Scan #${msg.iteration} — ${(msg.data||[]).length} αγώνες`);
+  }
+  if (msg.type === 'live_error') {
+    logLine('❌ ' + msg.error);
+  }
+});
+
+function renderLive(results) {
+  const tbody = document.getElementById('live-tbody');
+  const rows  = [];
+
+  results.forEach(m => {
+    const stats    = m.live_stats || {};
+    const sot      = stats.shots_on_target != null ? stats.shots_on_target : '—';
+    const corners  = stats.corners != null ? stats.corners : '—';
+    const poss     = stats.possession != null ? stats.possession + '%' : '—';
+    const timeStr  = m.commence ? m.commence.substring(11,16) : '—';
+
+    // Over 2.5 row
+    const vbets = m.value_bets || [];
+    const best  = vbets[0];
+    const o25prob = m.live_over_prob != null ? (m.live_over_prob*100).toFixed(1)+'%' : '—';
+    const hasValue25 = vbets.length > 0;
+    rows.push(buildRow(m, timeStr, 'Over 2.5', o25prob, sot, corners, poss, best, hasValue25, false));
+
+    // HT rows — only if minute ≤ 45
+    if ((m.minute || 0) <= 45) {
+      const ht05b  = (m.ht_05_bets || [])[0];
+      const ht05p  = m.ht_05_prob  != null ? (m.ht_05_prob*100).toFixed(1)+'%' : '—';
+      rows.push(buildRow(m, '↳', 'O0.5 HT', ht05p, '','','', ht05b, !!(m.ht_05_bets||[]).length, true));
+
+      const ht15b  = (m.ht_15_bets || [])[0];
+      const ht15p  = m.ht_15_prob  != null ? (m.ht_15_prob*100).toFixed(1)+'%' : '—';
+      rows.push(buildRow(m, '↳', 'O1.5 HT', ht15p, '','','', ht15b, !!(m.ht_15_bets||[]).length, true));
+    }
+  });
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="13" class="text-center text-dim py-12">Δεν βρέθηκαν live αγώνες</td></tr>';
+    return;
+  }
+
+  // Sort: value rows first
+  rows.sort((a,b) => (b.hasValue ? 1 : 0) - (a.hasValue ? 1 : 0));
+  tbody.innerHTML = rows.map(r=>r.html).join('');
+}
+
+function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValue, isHT) {
+  const score  = `${m.home_score}–${m.away_score}`;
+  const min    = m.minute != null ? m.minute+"'" : '—';
+  const bm     = bestBet ? bestBet.bookmaker : '—';
+  const odds   = bestBet ? bestBet.bookmaker_odds : '—';
+  const edge   = bestBet ? (bestBet.value_edge*100).toFixed(1)+'%' : '—';
+  const edgeCls = bestBet && bestBet.value_edge > 0 ? 'text-green' : 'text-red';
+
+  let status = '', statusCls = '';
+  if (hasValue) {
+    const sot_n = parseInt(sot);
+    if (!isNaN(sot_n) && sot_n >= 3) {
+      status = 'HIGH CONF!'; statusCls = 'text-pink-400 font-bold';
+    } else {
+      status = 'VALUE!'; statusCls = 'text-green font-bold';
+    }
+  }
+
+  const rowCls = hasValue ? 'bg-green/5 border-l-2 border-green' : (isHT ? 'bg-white/[0.02]' : '');
+  const matchName = isHT ? '' : `${m.home_team} vs ${m.away_team}`;
+
+  const html = `<tr class="${rowCls} border-b border-muted/20 hover:bg-white/5">
+    <td class="px-2 py-2 text-center text-dim text-xs">${timeStr}</td>
+    <td class="px-3 py-2 ${isHT ? 'pl-8 text-dim' : 'font-medium'}">${matchName}</td>
+    <td class="px-2 py-2 text-center font-mono">${isHT ? '' : score}</td>
+    <td class="px-2 py-2 text-center text-dim">${isHT ? '' : min}</td>
+    <td class="px-2 py-2 text-center text-xs">${market}</td>
+    <td class="px-2 py-2 text-center font-mono">${prob}</td>
+    <td class="px-2 py-2 text-center">${sot}</td>
+    <td class="px-2 py-2 text-center">${corners}</td>
+    <td class="px-2 py-2 text-center">${poss}</td>
+    <td class="px-2 py-2 text-center text-dim text-xs">${bm}</td>
+    <td class="px-2 py-2 text-center font-mono">${odds}</td>
+    <td class="px-2 py-2 text-center font-mono ${edgeCls}">${edge}</td>
+    <td class="px-2 py-2 text-center ${statusCls}">${status}</td>
+  </tr>`;
+  return { html, hasValue };
+}
+</script>
+{% endblock %}

@@ -1,1 +1,11 @@
-.venv/  echo __pycache__/  echo *.env 
+.venv/
+__pycache__/
+*.pyc
+.env
+*.env
+data/
+exports/
+dist/
+build/
+*.db
+logs/

@@ -870,6 +870,7 @@ class TipsterFrame(ctk.CTkFrame):
         self.app        = app
         self._picks     = []
         self._watchlist = []
+        self._wl_inner  = None   # recreated on each update_watchlist() call
         self._build()
 
     def _build(self):
@@ -972,15 +973,22 @@ class TipsterFrame(ctk.CTkFrame):
     def update_watchlist(self, games: list):
         """Called after pre-game scan with scored watchlist games."""
         self._watchlist = games
-        for w in self._wl_frame.winfo_children():
-            w.destroy()
+
+        # Destroy only the previously created inner widget (not CTkFrame internals)
+        if self._wl_inner is not None:
+            try:
+                self._wl_inner.destroy()
+            except Exception:
+                pass
+            self._wl_inner = None
 
         if not games:
-            ctk.CTkLabel(
+            self._wl_inner = ctk.CTkLabel(
                 self._wl_frame,
                 text="Δεν βρέθηκαν αγώνες με επαρκή HT potential σήμερα.",
                 font=ctk.CTkFont(size=11), text_color=C_DIM,
-            ).pack(expand=True)
+            )
+            self._wl_inner.pack(expand=True)
             return
 
         # Horizontal scrollable strip of mini-cards
@@ -989,6 +997,7 @@ class TipsterFrame(ctk.CTkFrame):
             orientation="horizontal", height=95,
         )
         strip.pack(fill="both", expand=True, padx=8, pady=6)
+        self._wl_inner = strip
 
         for g in games:
             self._make_watchlist_card(strip, g)

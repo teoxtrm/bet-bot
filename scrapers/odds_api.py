@@ -97,6 +97,33 @@ SHARP_BOOKS  = ["pinnacle"]
 SOFT_BOOKS   = ["betsson", "sport888", "williamhill", "onexbet", "betclic_fr", "unibet_se"]
 ALL_BOOKS    = SHARP_BOOKS + SOFT_BOOKS
 
+# Sport keys confirmed to NOT support totals_h1 — populated at runtime, avoids wasted 422 calls
+_ht_unsupported: set[str] = set()
+
+
+def _load_ht_unsupported():
+    try:
+        saved = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
+        for k in saved.get("ht_unsupported", []):
+            _ht_unsupported.add(k)
+    except Exception:
+        pass
+
+
+def _persist_ht_unsupported():
+    try:
+        _CREDITS_FILE.parent.mkdir(exist_ok=True)
+        existing = {}
+        if _CREDITS_FILE.exists():
+            existing = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
+        existing["ht_unsupported"] = sorted(_ht_unsupported)
+        _CREDITS_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+_load_ht_unsupported()
+
 
 def _get(path: str, params: dict, track_credits: bool = True) -> list | dict | None:
     if not API_KEY:
@@ -172,11 +199,18 @@ def get_odds(sport_key: str, markets: list = None, bookmakers: list = None) -> l
     if bookmakers:
         params["bookmakers"] = ",".join(bookmakers)
 
+    # Skip totals_h1 upfront for leagues known to not support it (saves 1 credit)
+    if sport_key in _ht_unsupported and "totals_h1" in markets:
+        markets = [m for m in markets if m != "totals_h1"]
+        params["markets"] = ",".join(markets)
+
     raw = _get(f"/sports/{sport_key}/odds/", params)
     if raw is False and "totals_h1" in markets:
-        # League doesn't support totals_h1 — retry without it (no extra credit cost)
+        # First time we learn this league doesn't support totals_h1 — remember it
+        _ht_unsupported.add(sport_key)
+        _persist_ht_unsupported()
         params["markets"] = ",".join(m for m in markets if m != "totals_h1")
-        print(f"[OddsAPI] Retry {sport_key} without totals_h1")
+        print(f"[OddsAPI] {sport_key} added to no-HT cache, retry without totals_h1")
         raw = _get(f"/sports/{sport_key}/odds/", params)
     if not raw:
         return []

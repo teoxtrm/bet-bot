@@ -129,6 +129,7 @@ _pregame_cache: dict = {}   # username → dict
 _ws_clients:    dict = {}   # username → list[WebSocket]
 _ws_lock        = asyncio.Lock()
 _state_lock     = threading.Lock()
+_event_loop     = None      # set at startup, used by background threads
 
 
 def _user_live(username: str) -> list:
@@ -169,17 +170,15 @@ async def _broadcast(username: str, payload: dict):
 
 
 def _broadcast_sync(username: str, payload: dict):
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.run_coroutine_threadsafe(_broadcast(username, payload), loop)
-    except Exception:
-        pass
+    if _event_loop and _event_loop.is_running():
+        asyncio.run_coroutine_threadsafe(_broadcast(username, payload), _event_loop)
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
+    global _event_loop
+    _event_loop = asyncio.get_event_loop()
     (BASE_DIR / "data").mkdir(exist_ok=True)
     # Create default admin if no users exist
     users = _load_users()

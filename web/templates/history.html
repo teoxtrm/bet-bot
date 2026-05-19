@@ -18,6 +18,15 @@
     </div>
   </div>
 
+  <!-- PnL Chart -->
+  <div id="pnl-chart-wrap" class="bg-card rounded-xl p-4 hidden">
+    <div class="flex items-center justify-between mb-3">
+      <span class="text-sm font-semibold text-dim uppercase tracking-wide">Cumulative PnL</span>
+      <span id="pnl-chart-summary" class="text-xs text-dim"></span>
+    </div>
+    <canvas id="pnl-chart" height="90"></canvas>
+  </div>
+
   <!-- KPI Cards -->
   <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3" id="kpi-row">
     <!-- filled by JS -->
@@ -101,10 +110,13 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 let currentFilter = 'all';
+let _pnlChart = null;
 loadStats();
 loadBets('all');
+loadPnlChart();
 
 function kpiCard(label, value, cls='text-white') {
   return `<div class="bg-card border border-muted rounded-xl p-3">
@@ -178,6 +190,66 @@ function renderBets(bets) {
   }).join('');
 }
 
+// ── PnL Chart ─────────────────────────────────────────────────────────────────
+function loadPnlChart() {
+  fetch('/api/history/pnl').then(r => r.json()).then(d => {
+    const rows = d.pnl || [];
+    if (rows.length < 2) return;  // not enough data to draw
+
+    document.getElementById('pnl-chart-wrap').classList.remove('hidden');
+
+    const labels = rows.map(r => r.date);
+    const data   = rows.map(r => r.cumulative_pnl);
+    const final  = data[data.length - 1];
+    const color  = final >= 0 ? '#00b894' : '#d63031';
+
+    document.getElementById('pnl-chart-summary').textContent =
+      `${rows.length} days  |  final ${final >= 0 ? '+' : ''}${final.toFixed(2)} €`;
+
+    if (_pnlChart) _pnlChart.destroy();
+    _pnlChart = new Chart(document.getElementById('pnl-chart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          data,
+          borderColor:     color,
+          backgroundColor: color + '18',
+          borderWidth:     2,
+          pointRadius:     rows.length > 30 ? 0 : 3,
+          pointHoverRadius: 5,
+          fill: true,
+          tension: 0.3,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => ` ${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y.toFixed(2)} €`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color: '#636e72', maxTicksLimit: 8, maxRotation: 0 },
+            grid:  { color: '#ffffff0a' },
+          },
+          y: {
+            ticks: {
+              color: '#636e72',
+              callback: v => (v >= 0 ? '+' : '') + v.toFixed(0) + ' €',
+            },
+            grid: { color: '#ffffff0a' },
+          },
+        },
+      },
+    });
+  }).catch(() => {});
+}
+
 // Auto Settle
 document.getElementById('btn-auto-settle').addEventListener('click', ()=>{
   if (!confirm('Αυτόματο settlement από API;')) return;
@@ -192,6 +264,7 @@ connectWS(msg => {
     alert(`✓ Settled: ${msg.data.settled}  Skipped: ${msg.data.skipped}  Errors: ${msg.data.errors}`);
     loadStats();
     loadBets(currentFilter);
+    loadPnlChart();
   }
 });
 
@@ -225,6 +298,7 @@ document.getElementById('settle-confirm').addEventListener('click', ()=>{
     alert(`${d.status}  PnL: ${d.profit_loss >= 0 ? '+' : ''}${d.profit_loss.toFixed(2)} €`);
     loadStats();
     loadBets(currentFilter);
+    loadPnlChart();
   }).catch(e=>alert('Error: '+e));
 });
 </script>

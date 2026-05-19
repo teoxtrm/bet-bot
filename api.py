@@ -897,6 +897,13 @@ async def history_stats(username=Depends(get_current_user_api)):
     return get_stats(db_path=db_path)
 
 
+@app.get("/api/history/pnl")
+async def history_pnl(username=Depends(get_current_user_api)):
+    from utils.database import get_daily_pnl
+    db_path = str(user_db(username))
+    return {"pnl": get_daily_pnl(db_path=db_path)}
+
+
 @app.post("/api/history/settle/auto")
 async def auto_settle(background_tasks: BackgroundTasks,
                       username=Depends(get_current_user_api)):

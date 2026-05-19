@@ -29,7 +29,8 @@ sys.path.insert(0, str(BASE_DIR))
 load_dotenv(BASE_DIR / ".env")
 
 from utils.database import (auto_settle_from_api, get_all_bets, get_pending_bets,
-                              get_stats, init_db, settle_bet, track_value_bet)
+                              get_stats, init_db, save_match_snapshot,
+                              settle_bet, track_value_bet)
 from utils.scan_cache import (clear_league_cache, load_league_scan, load_scan,
                                save_league_scan, save_scan)
 
@@ -396,8 +397,13 @@ async def scan_results(username=Depends(get_current_user_api)):
 @app.get("/api/leagues")
 async def get_leagues(username=Depends(get_current_user_api)):
     from scrapers.odds_api import SPORT_KEYS
-    options = ["ALL LEAGUES", "TIER 1 ONLY", "TIER 2 ONLY", "TIER 3 ONLY"]
-    options += list(SPORT_KEYS.keys())
+    options = [
+        "STARTER PACK",    # top 8 by strategy score (~8 credits)
+        "PRIME ONLY",      # all Tier 1 leagues (14 leagues)
+        "PRIME + MAJOR",   # Tier 1 + Tier 2 (27 leagues)
+        "ALL LEAGUES",     # everything
+    ]
+    options += sorted(SPORT_KEYS.keys())
     return {"leagues": options}
 
 
@@ -447,9 +453,17 @@ def _run_pregame_scan(username: str, league_key: str):
         cutoff_from = now_utc - timedelta(hours=2)
         cutoff_to   = now_utc + timedelta(hours=24)
 
-        _TIER_OPTS  = {"ALL LEAGUES", "TIER 1 ONLY", "TIER 2 ONLY", "TIER 3 ONLY"}
+        _TIER_OPTS  = {"ALL LEAGUES", "PRIME ONLY", "PRIME + MAJOR", "STARTER PACK",
+                       "TIER 1 ONLY", "TIER 2 ONLY", "TIER 3 ONLY"}
         scan_all    = league_key in _TIER_OPTS
-        tier_filter = {"TIER 1 ONLY": 1, "TIER 2 ONLY": 2, "TIER 3 ONLY": 3}.get(league_key)
+        starter_pack = league_key == "STARTER PACK"
+        # tier_filter None = all, 1 = prime only, 2 = prime+major (<=), 3 = exact tier 3
+        tier_filter = {
+            "PRIME ONLY": 1, "TIER 1 ONLY": 1,
+            "PRIME + MAJOR": 2,
+            "TIER 2 ONLY": 22,   # legacy: only tier 2
+            "TIER 3 ONLY": 3,
+        }.get(league_key)
 
         rows, value_rows, all_targets, events_data = [], [], [], []
 
@@ -465,10 +479,30 @@ def _run_pregame_scan(username: str, league_key: str):
                 p_ou   = get_pinnacle_no_vig_totals(ev, 2.5)
                 p_ht   = get_pinnacle_no_vig_ht_totals(ev, 0.5)
                 p_ht15 = get_pinnacle_no_vig_ht_totals(ev, 1.5)
-                _tier  = OKL.get(sport_key, {}).get("tier", 2)
+                _league_prof = OKL.get(sport_key, {})
+                _tier  = _league_prof.get("tier", 2)
+                _score = _league_prof.get("strategy_score", 6)
                 _evdata.append({"event": ev, "p_1x2": p_1x2, "p_ou": p_ou,
                                  "p_ht": p_ht, "p_ht15": p_ht15,
-                                 "league": lkey, "tier": _tier})
+                                 "league": lkey, "tier": _tier, "strategy_score": _score})
+                save_match_snapshot(
+                    event_id        = ev.get("id", ""),
+                    match_date      = ev.get("commence", "")[:10],
+                    league          = lkey,
+                    sport_key       = sport_key,
+                    home_team       = ev.get("home_team", ""),
+                    away_team       = ev.get("away_team", ""),
+                    scan_date       = today_str,
+                    strategy_score  = _score,
+                    pin_home_prob   = p_1x2.get("home")      if p_1x2  else None,
+                    pin_draw_prob   = p_1x2.get("draw")      if p_1x2  else None,
+                    pin_away_prob   = p_1x2.get("away")      if p_1x2  else None,
+                    pin_over25_prob = p_ou.get("over_prob")  if p_ou   else None,
+                    pin_under25_prob= p_ou.get("under_prob") if p_ou   else None,
+                    pin_ht05_prob   = p_ht.get("over_prob")  if p_ht   else None,
+                    pin_ht15_prob   = p_ht15.get("over_prob") if p_ht15 else None,
+                    db_path         = db_path,
+                )
                 checks = []
                 if p_ou:
                     pt = str(p_ou["point"]).replace(".", "_")
@@ -535,13 +569,21 @@ def _run_pregame_scan(username: str, league_key: str):
                     best_ht_odds=best_ht, p_ht_ou=p_ht, has_value_bet=has_value_ev))
             return _rows, _vrows, _tgts, _evdata
 
-        if tier_filter is not None:
-            items = [(lk, sk) for lk, sk in SPORT_KEYS.items()
-                     if OKL.get(sk, {}).get("tier", 2) == tier_filter]
+        if starter_pack:
+            from utils.league_map import get_starter_keys
+            starter_set = set(get_starter_keys(8))
+            items = [(lk, sk) for lk, sk in SPORT_KEYS.items() if sk in starter_set]
+        elif tier_filter is not None:
+            if tier_filter == 22:   # legacy TIER 2 ONLY → exact tier 2
+                items = [(lk, sk) for lk, sk in SPORT_KEYS.items()
+                         if OKL.get(sk, {}).get("tier", 2) == 2]
+            else:
+                items = [(lk, sk) for lk, sk in SPORT_KEYS.items()
+                         if OKL.get(sk, {}).get("tier", 2) <= tier_filter]
         elif scan_all:
             items = list(SPORT_KEYS.items())
         else:
-            items = [(league_key, SPORT_KEYS.get(league_key, "soccer_epl"))]
+            items = [(league_key, SPORT_KEYS.get(league_key, "soccer_efl_champ"))]
 
         if scan_all:
             status["text"] = "Checking which leagues play today..."
@@ -601,7 +643,7 @@ def _run_pregame_scan(username: str, league_key: str):
         save_scan(rows, all_targets, tipster_picks, watchlist, udir)
 
         status["running"]  = False
-        status["text"]     = f"✓ {len(value_rows)} value bets | {len(rows)} markets"
+        status["text"]     = f"✓ {len(tipster_picks)} tips | {len(watchlist)} live candidates | {len(rows)} markets"
         status["progress"] = 1.0
         _broadcast_sync(username, {
             "type": "scan_done", "data": dict(status),

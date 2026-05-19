@@ -11,15 +11,15 @@ Live Targets Classifier
 
 from dataclasses import dataclass, field
 
-# ── Thresholds ────────────────────────────────────────────────────────────────
-OVER_HIGH_PROB      = 0.60   # Pinnacle no-vig Over 2.5 > αυτό = πιθανός goalfest
-OVER_VERY_HIGH_PROB = 0.68   # Πολύ υψηλή → highest priority
-FAVE_WIN_PROB       = 0.70   # Αν φαβορί > 70% πιθανότητα νίκης
-FAVE_MAX_ODDS       = 1.35   # ... αλλά απόδοση < 1.35 = no pre-game value
-FAVE_HIGH_PROB      = 0.80   # Φαβορί > 80% → highest priority
-BTTS_HIGH_PROB      = 0.65   # BTTS yes > 65% → Live Target
-HT_GOAL_HIGH_PROB   = 0.75   # Over 0.5 HT > 75% → HT Goal Candidate
-HT_GOAL_LOCK_PROB   = 0.85   # > 85% → highest priority
+# ── Thresholds (aligned with config.HT_FLAG_05, O25_FLAG) ────────────────────
+OVER_HIGH_PROB      = 0.58   # Pinnacle O2.5 >= this → live target (config.O25_FLAG)
+OVER_VERY_HIGH_PROB = 0.68   # High priority
+FAVE_WIN_PROB       = 0.70   # Favourite win probability threshold
+FAVE_MAX_ODDS       = 1.35   # Favourite odds below this = no pre-game value
+FAVE_HIGH_PROB      = 0.80   # Favourite >= 80% → high priority
+BTTS_HIGH_PROB      = 0.63   # BTTS yes estimated probability threshold
+HT_GOAL_HIGH_PROB   = 0.68   # HT Over 0.5 >= this → flag for live (config.HT_FLAG_05)
+HT_GOAL_LOCK_PROB   = 0.82   # >= 82% → highest priority
 
 
 @dataclass

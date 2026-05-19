@@ -1,20 +1,24 @@
 """
-SQLite Database Manager — data/bet_bot.db
-=========================================
-Πίνακες:
-  bets_tracked  — κάθε value bet που εντοπίστηκε
-  settlements   — ιστορικό settlement actions (audit log)
+SQLite Database Manager.
+
+Tables:
+  bets_tracked     — every tracked bet with probabilities, odds, settlement
+  settlements      — settlement audit log
+  match_snapshots  — one row per scanned game: Pinnacle probs + actual result
+                     This is the primary ML training dataset (grows over time)
+  team_form        — cached api-football team form (avoid repeat API calls)
+  league_stats     — rolling per-league goal/corner averages (replace hardcoded estimates)
 """
 
+import json
 import sqlite3
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
 
 DB_PATH = Path("data/bet_bot.db")  # default (single-user / legacy)
 
-# ─── SCHEMA ──────────────────────────────────────────────────────────────────
+# ── Schema ────────────────────────────────────────────────────────────────────
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS bets_tracked (
@@ -24,18 +28,21 @@ CREATE TABLE IF NOT EXISTS bets_tracked (
     league           TEXT    NOT NULL,
     home_team        TEXT    NOT NULL,
     away_team        TEXT    NOT NULL,
-    bet_type         TEXT    NOT NULL,   -- "Over 2.5", "Home Win", "BTTS Yes", κ.ά.
+    bet_type         TEXT    NOT NULL,
     our_probability  REAL    NOT NULL,
     bookmaker        TEXT    NOT NULL,
     bookmaker_odds   REAL    NOT NULL,
     value_edge_pct   REAL    NOT NULL,
-    kelly_stake      REAL    NOT NULL,   -- σε ευρώ
+    kelly_stake      REAL    NOT NULL,
     is_live          INTEGER NOT NULL DEFAULT 0,
-    live_minute      INTEGER,            -- NULL αν pre-game
-    status           TEXT    NOT NULL DEFAULT 'Pending',  -- Pending/Win/Loss/Void
+    live_minute      INTEGER,
+    status           TEXT    NOT NULL DEFAULT 'Pending',
     final_home_goals INTEGER,
     final_away_goals INTEGER,
-    profit_loss      REAL,               -- υπολογίζεται στο settlement
+    ht_home_goals    INTEGER,
+    ht_away_goals    INTEGER,
+    corner_count     INTEGER,
+    profit_loss      REAL,
     settled_at       TEXT,
     created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -51,14 +58,84 @@ CREATE TABLE IF NOT EXISTS settlements (
     settled_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_bets_status   ON bets_tracked(status);
-CREATE INDEX IF NOT EXISTS idx_bets_league   ON bets_tracked(league);
-CREATE INDEX IF NOT EXISTS idx_bets_event_id ON bets_tracked(event_id);
-CREATE INDEX IF NOT EXISTS idx_bets_teams    ON bets_tracked(home_team, away_team, match_date);
+CREATE TABLE IF NOT EXISTS match_snapshots (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id         TEXT    NOT NULL,
+    match_date       TEXT    NOT NULL,
+    league           TEXT    NOT NULL,
+    sport_key        TEXT    NOT NULL,
+    home_team        TEXT    NOT NULL,
+    away_team        TEXT    NOT NULL,
+    -- Pinnacle no-vig pre-game probabilities
+    pin_home_prob    REAL,
+    pin_draw_prob    REAL,
+    pin_away_prob    REAL,
+    pin_over25_prob  REAL,
+    pin_under25_prob REAL,
+    pin_ht05_prob    REAL,
+    pin_ht15_prob    REAL,
+    -- League context
+    strategy_score   INTEGER,
+    -- Actual results (filled at settlement)
+    final_home_goals INTEGER,
+    final_away_goals INTEGER,
+    ht_home_goals    INTEGER,
+    ht_away_goals    INTEGER,
+    corner_count     INTEGER,
+    -- Derived outcome labels (for ML)
+    result_1x2       TEXT,    -- "1", "X", or "2"
+    result_over25    INTEGER, -- 1=Win, 0=Loss, NULL=unsettled
+    result_ht_over05 INTEGER,
+    result_ht_over15 INTEGER,
+    -- Metadata
+    scan_date        TEXT    NOT NULL,
+    settled_at       TEXT,
+    created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(event_id)
+);
+
+CREATE TABLE IF NOT EXISTS team_form (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id             INTEGER NOT NULL,
+    team_name           TEXT    NOT NULL,
+    league_id           INTEGER,
+    fetch_date          TEXT    NOT NULL,
+    games_analyzed      INTEGER,
+    avg_goals_scored    REAL,
+    avg_goals_conceded  REAL,
+    last_5_json         TEXT,   -- JSON array of last 5 result dicts
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(team_id, fetch_date)
+);
+
+CREATE TABLE IF NOT EXISTS league_stats (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    league          TEXT    NOT NULL,
+    season          TEXT    NOT NULL,
+    sample_size     INTEGER NOT NULL DEFAULT 0,
+    avg_goals       REAL,
+    avg_ht_goals    REAL,
+    avg_corners     REAL,
+    over_25_rate    REAL,
+    ht_over_05_rate REAL,
+    ht_over_15_rate REAL,
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(league, season)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bets_status    ON bets_tracked(status);
+CREATE INDEX IF NOT EXISTS idx_bets_league    ON bets_tracked(league);
+CREATE INDEX IF NOT EXISTS idx_bets_event_id  ON bets_tracked(event_id);
+CREATE INDEX IF NOT EXISTS idx_bets_teams     ON bets_tracked(home_team, away_team, match_date);
+CREATE INDEX IF NOT EXISTS idx_snaps_event    ON match_snapshots(event_id);
+CREATE INDEX IF NOT EXISTS idx_snaps_date     ON match_snapshots(match_date);
+CREATE INDEX IF NOT EXISTS idx_snaps_league   ON match_snapshots(league);
+CREATE INDEX IF NOT EXISTS idx_form_team      ON team_form(team_id, fetch_date);
+CREATE INDEX IF NOT EXISTS idx_lstats_league  ON league_stats(league, season);
 """
 
 
-# ─── CONNECTION ───────────────────────────────────────────────────────────────
+# ── Connection ────────────────────────────────────────────────────────────────
 
 @contextmanager
 def _conn(db_path=None):
@@ -78,15 +155,98 @@ def _conn(db_path=None):
         con.close()
 
 
+def _migrate(con):
+    """Add new columns to existing tables without dropping data."""
+    # bets_tracked: add HT score and corner columns if missing
+    existing = {row[1] for row in con.execute("PRAGMA table_info(bets_tracked)")}
+    for col, dtype in [
+        ("ht_home_goals", "INTEGER"),
+        ("ht_away_goals", "INTEGER"),
+        ("corner_count",  "INTEGER"),
+    ]:
+        if col not in existing:
+            con.execute(f"ALTER TABLE bets_tracked ADD COLUMN {col} {dtype}")
+
+
 def init_db(db_path=None):
-    """Δημιουργεί τους πίνακες αν δεν υπάρχουν."""
     with _conn(db_path) as con:
         con.executescript(SCHEMA)
+        _migrate(con)
     path = Path(db_path) if db_path else DB_PATH
     print(f"[DB] Initialized: {path.resolve()}")
 
 
-# ─── INSERT ──────────────────────────────────────────────────────────────────
+# ── Settlement logic ──────────────────────────────────────────────────────────
+
+def _determine_outcome(
+    bet_type:       str,
+    home_goals:     int,
+    away_goals:     int,
+    ht_home_goals:  int | None = None,
+    ht_away_goals:  int | None = None,
+    corner_count:   int | None = None,
+) -> str:
+    bt    = bet_type.lower().strip()
+    total = home_goals + away_goals
+
+    # Corner bets
+    if "corner" in bt:
+        if corner_count is None:
+            return "Void"
+        for thr in (8.5, 9.5, 10.5, 11.5, 12.5):
+            thr_str = str(thr)
+            if f"over {thr_str}" in bt:
+                return "Win" if corner_count > thr else "Loss"
+            if f"under {thr_str}" in bt:
+                return "Win" if corner_count < thr else "Loss"
+        return "Void"
+
+    # HT bets — must have HT score; fall through to Void if missing
+    if "ht" in bt:
+        if ht_home_goals is None or ht_away_goals is None:
+            return "Void"
+        ht_total = ht_home_goals + ht_away_goals
+        if "over 0.5" in bt:
+            return "Win" if ht_total > 0 else "Loss"
+        if "over 1.5" in bt:
+            return "Win" if ht_total > 1 else "Loss"
+        if "over 2.5" in bt:
+            return "Win" if ht_total > 2 else "Loss"
+        if "under 0.5" in bt:
+            return "Win" if ht_total < 1 else "Loss"
+        if "under 1.5" in bt:
+            return "Win" if ht_total < 2 else "Loss"
+        return "Void"
+
+    # Full-time bets
+    rules = {
+        "over 0.5":  lambda: total > 0,
+        "over 1.5":  lambda: total > 1,
+        "over 2.5":  lambda: total > 2,
+        "over 3.5":  lambda: total > 3,
+        "over 4.5":  lambda: total > 4,
+        "under 0.5": lambda: total < 1,
+        "under 1.5": lambda: total < 2,
+        "under 2.5": lambda: total < 3,
+        "under 3.5": lambda: total < 4,
+        "under 4.5": lambda: total < 5,
+        "btts yes":  lambda: home_goals > 0 and away_goals > 0,
+        "btts no":   lambda: home_goals == 0 or away_goals == 0,
+        "home win":  lambda: home_goals > away_goals,
+        "draw":      lambda: home_goals == away_goals,
+        "away win":  lambda: away_goals > home_goals,
+        "1":         lambda: home_goals > away_goals,
+        "x":         lambda: home_goals == away_goals,
+        "2":         lambda: away_goals > home_goals,
+    }
+    for key, check in rules.items():
+        if key in bt:
+            return "Win" if check() else "Loss"
+
+    return "Void"
+
+
+# ── Insert / track bets ───────────────────────────────────────────────────────
 
 def insert_bet(
     event_id: str,
@@ -104,21 +264,16 @@ def insert_bet(
     live_minute: int = None,
     db_path=None,
 ) -> int:
-    """
-    Καταχωρεί ένα value bet. Αποφεύγει duplicate (ίδιο event+bet_type+bookmaker εντός 4ωρου).
-    Επιστρέφει το ID του record ή -1 αν είναι duplicate.
-    """
+    """Insert a bet. Returns row ID, or -1 if duplicate within 4 hours."""
     with _conn(db_path) as con:
-        # Duplicate check
         existing = con.execute("""
             SELECT id FROM bets_tracked
-            WHERE home_team = ? AND away_team = ? AND bet_type = ? AND bookmaker = ?
-              AND status = 'Pending'
+            WHERE home_team=? AND away_team=? AND bet_type=? AND bookmaker=?
+              AND status='Pending'
               AND datetime(created_at) > datetime('now', '-4 hours')
         """, (home_team, away_team, bet_type, bookmaker)).fetchone()
-
         if existing:
-            return -1  # duplicate
+            return -1
 
         cur = con.execute("""
             INSERT INTO bets_tracked
@@ -138,41 +293,33 @@ def track_value_bet(value_result: dict, kelly_result: dict,
                     match_info: dict, league: str,
                     is_live: bool = False, live_minute: int = None,
                     db_path=None) -> int:
-    """
-    Wrapper για εύκολη καταγραφή από value_calculator output.
-
-    Args:
-        value_result: output από calculate_value()
-        kelly_result: output από kelly_criterion()
-        match_info: {"event_id", "match_date", "home_team", "away_team", "bet_type"}
-    """
     bet_id = insert_bet(
-        event_id       = match_info.get("event_id", ""),
-        match_date     = match_info.get("match_date", datetime.now().strftime("%Y-%m-%d")),
-        league         = league,
-        home_team      = match_info["home_team"],
-        away_team      = match_info["away_team"],
-        bet_type       = match_info["bet_type"],
-        our_probability= value_result["our_probability"],
-        bookmaker      = value_result.get("bookmaker", "unknown"),
-        bookmaker_odds = value_result["bookmaker_odds"],
-        value_edge_pct = value_result["value_edge"],
-        kelly_stake    = kelly_result["suggested_bet"],
-        is_live        = is_live,
-        live_minute    = live_minute,
-        db_path        = db_path,
+        event_id        = match_info.get("event_id", ""),
+        match_date      = match_info.get("match_date", datetime.now().strftime("%Y-%m-%d")),
+        league          = league,
+        home_team       = match_info["home_team"],
+        away_team       = match_info["away_team"],
+        bet_type        = match_info["bet_type"],
+        our_probability = value_result["our_probability"],
+        bookmaker       = value_result.get("bookmaker", "unknown"),
+        bookmaker_odds  = value_result["bookmaker_odds"],
+        value_edge_pct  = value_result["value_edge"],
+        kelly_stake     = kelly_result["suggested_bet"],
+        is_live         = is_live,
+        live_minute     = live_minute,
+        db_path         = db_path,
     )
     if bet_id > 0:
         print(f"[DB] Tracked bet #{bet_id}: {match_info['home_team']} vs {match_info['away_team']} — {match_info['bet_type']}")
     return bet_id
 
 
-# ─── QUERIES ─────────────────────────────────────────────────────────────────
+# ── Queries ───────────────────────────────────────────────────────────────────
 
 def get_pending_bets(db_path=None) -> list[dict]:
     with _conn(db_path) as con:
         rows = con.execute("""
-            SELECT * FROM bets_tracked WHERE status = 'Pending'
+            SELECT * FROM bets_tracked WHERE status='Pending'
             ORDER BY match_date ASC, created_at ASC
         """).fetchall()
     return [dict(r) for r in rows]
@@ -205,52 +352,23 @@ def get_stats(db_path=None) -> dict:
         """).fetchone()
     d = dict(row)
     settled = (d["wins"] or 0) + (d["losses"] or 0)
-    d["win_rate"]   = (d["wins"] or 0) / settled if settled > 0 else 0.0
-    d["roi"]        = ((d["total_pnl"] or 0) / d["total_staked"] * 100) if (d["total_staked"] or 0) > 0 else 0.0
-    d["settled"]    = settled
+    d["win_rate"] = (d["wins"] or 0) / settled if settled > 0 else 0.0
+    d["roi"]      = ((d["total_pnl"] or 0) / d["total_staked"] * 100) if (d["total_staked"] or 0) > 0 else 0.0
+    d["settled"]  = settled
     return d
 
 
-# ─── SETTLEMENT ──────────────────────────────────────────────────────────────
+# ── Settlement ────────────────────────────────────────────────────────────────
 
-def _determine_outcome(bet_type: str, home_goals: int, away_goals: int) -> str:
-    """Καθορίζει Win/Loss βάσει bet_type και τελικού σκορ."""
-    total = home_goals + away_goals
-    bt    = bet_type.lower().strip()
-
-    rules = {
-        "over 0.5":  lambda: total > 0,
-        "over 1.5":  lambda: total > 1,
-        "over 2.5":  lambda: total > 2,
-        "over 3.5":  lambda: total > 3,
-        "over 4.5":  lambda: total > 4,
-        "under 0.5": lambda: total < 1,
-        "under 1.5": lambda: total < 2,
-        "under 2.5": lambda: total < 3,
-        "under 3.5": lambda: total < 4,
-        "under 4.5": lambda: total < 5,
-        "btts yes":  lambda: home_goals > 0 and away_goals > 0,
-        "btts no":   lambda: home_goals == 0 or away_goals == 0,
-        "home win":  lambda: home_goals > away_goals,
-        "draw":      lambda: home_goals == away_goals,
-        "away win":  lambda: away_goals > home_goals,
-        "1":         lambda: home_goals > away_goals,
-        "x":         lambda: home_goals == away_goals,
-        "2":         lambda: away_goals > home_goals,
-    }
-
-    for key, check in rules.items():
-        if key in bt:
-            return "Win" if check() else "Loss"
-
-    return "Void"  # αγνωστος τύπος
-
-
-def settle_bet(bet_id: int, home_goals: int, away_goals: int, db_path=None) -> dict:
-    """
-    Κλείνει ένα στοίχημα με το τελικό σκορ.
-    Επιστρέφει {"status", "profit_loss"}.
-    """
+def settle_bet(
+    bet_id:        int,
+    home_goals:    int,
+    away_goals:    int,
+    ht_home_goals: int | None = None,
+    ht_away_goals: int | None = None,
+    corner_count:  int | None = None,
+    db_path=None,
+) -> dict:
     with _conn(db_path) as con:
         bet = con.execute("SELECT * FROM bets_tracked WHERE id=?", (bet_id,)).fetchone()
         if not bet:
@@ -259,22 +377,28 @@ def settle_bet(bet_id: int, home_goals: int, away_goals: int, db_path=None) -> d
             return {"error": f"Bet #{bet_id} already settled ({bet['status']})"}
 
         bet = dict(bet)
-        new_status = _determine_outcome(bet["bet_type"], home_goals, away_goals)
+        new_status = _determine_outcome(
+            bet["bet_type"], home_goals, away_goals,
+            ht_home_goals, ht_away_goals, corner_count,
+        )
 
         if new_status == "Win":
             pnl = round(bet["kelly_stake"] * (bet["bookmaker_odds"] - 1), 2)
         elif new_status == "Loss":
             pnl = -round(bet["kelly_stake"], 2)
         else:
-            pnl = 0.0  # Void = επιστροφή χαρτζιλικιού
+            pnl = 0.0
 
         now = datetime.now(timezone.utc).isoformat()
         con.execute("""
             UPDATE bets_tracked
             SET status=?, final_home_goals=?, final_away_goals=?,
+                ht_home_goals=?, ht_away_goals=?, corner_count=?,
                 profit_loss=?, settled_at=?
             WHERE id=?
-        """, (new_status, home_goals, away_goals, pnl, now, bet_id))
+        """, (new_status, home_goals, away_goals,
+              ht_home_goals, ht_away_goals, corner_count,
+              pnl, now, bet_id))
 
         con.execute("""
             INSERT INTO settlements (bet_id, old_status, new_status, home_goals, away_goals, profit_loss)
@@ -285,10 +409,7 @@ def settle_bet(bet_id: int, home_goals: int, away_goals: int, db_path=None) -> d
 
 
 def auto_settle_from_api(sport_key: str = None, db_path=None, api_key: str = None) -> dict:
-    """
-    Αυτόματο settlement: τραβάει αποτελέσματα από The Odds API
-    και κλείνει όλα τα Pending bets που έχουν τελειώσει.
-    """
+    """Fetch completed scores from Odds API and settle matching pending bets."""
     from scrapers.odds_api import SPORT_KEYS
     import requests, os
 
@@ -296,7 +417,6 @@ def auto_settle_from_api(sport_key: str = None, db_path=None, api_key: str = Non
     if not pending:
         return {"settled": 0, "skipped": 0, "errors": 0}
 
-    # Μάζεψε όλα τα leagues που χρειάζονται settlement
     leagues_needed = {b["league"] for b in pending}
     results_by_teams: dict[tuple, dict] = {}
 
@@ -308,8 +428,11 @@ def auto_settle_from_api(sport_key: str = None, db_path=None, api_key: str = Non
         if not sk:
             continue
         try:
-            r = requests.get(f"{BASE}/sports/{sk}/scores/",
-                params={"apiKey": API_KEY, "daysFrom": 3, "dateFormat": "iso"}, timeout=15)
+            r = requests.get(
+                f"{BASE}/sports/{sk}/scores/",
+                params={"apiKey": API_KEY, "daysFrom": 3, "dateFormat": "iso"},
+                timeout=15,
+            )
             if r.status_code != 200:
                 continue
             for ev in r.json():
@@ -324,16 +447,16 @@ def auto_settle_from_api(sport_key: str = None, db_path=None, api_key: str = Non
                 results_by_teams[(h.lower(), a.lower())] = {
                     "home_goals": sm.get(h, 0),
                     "away_goals": sm.get(a, 0),
-                    "home_team":  h,
-                    "away_team":  a,
+                    "event_id":   ev.get("id", ""),
                 }
         except Exception as e:
             print(f"[DB] Settlement fetch error ({league}): {e}")
 
     settled = skipped = errors = 0
     for bet in pending:
-        # HT bets require the half-time score — cannot be settled from FT data
-        if " HT" in bet["bet_type"]:
+        # HT and corner bets need extra data — must be settled manually
+        bt = bet["bet_type"].lower()
+        if "ht" in bt or "corner" in bt:
             skipped += 1
             continue
         key = (bet["home_team"].lower(), bet["away_team"].lower())
@@ -345,9 +468,13 @@ def auto_settle_from_api(sport_key: str = None, db_path=None, api_key: str = Non
             outcome = settle_bet(bet["id"], res["home_goals"], res["away_goals"], db_path=db_path)
             if "error" not in outcome:
                 settled += 1
-                icon = "W" if outcome["status"] == "Win" else ("L" if outcome["status"] == "Loss" else "V")
-                pnl_str = f"+{outcome['profit_loss']:.2f}" if outcome['profit_loss'] >= 0 else f"{outcome['profit_loss']:.2f}"
-                print(f"[DB] [{icon}] #{bet['id']} {bet['home_team']} vs {bet['away_team']} — {bet['bet_type']} | PnL: {pnl_str}")
+                icon    = "W" if outcome["status"] == "Win" else ("L" if outcome["status"] == "Loss" else "V")
+                pnl_str = f"+{outcome['profit_loss']:.2f}" if outcome["profit_loss"] >= 0 else f"{outcome['profit_loss']:.2f}"
+                print(f"[DB] [{icon}] #{bet['id']} {bet['home_team']} vs {bet['away_team']} — {bet['bet_type']} | {pnl_str}")
+                # Update snapshot result while we have the scores
+                eid = bet.get("event_id") or res.get("event_id", "")
+                if eid:
+                    update_snapshot_result(eid, res["home_goals"], res["away_goals"], db_path=db_path)
             else:
                 errors += 1
         except Exception as e:
@@ -358,15 +485,267 @@ def auto_settle_from_api(sport_key: str = None, db_path=None, api_key: str = Non
 
 
 def manual_settle(bet_id: int, home_goals: int, away_goals: int) -> dict:
-    """Χειροκίνητο settlement για έναν συγκεκριμένο αγώνα."""
     return settle_bet(bet_id, home_goals, away_goals)
 
 
 def void_bet(bet_id: int, db_path=None) -> bool:
-    """Ακυρώνει ένα στοίχημα (π.χ. αγώνας δεν παίχτηκε)."""
     with _conn(db_path) as con:
         con.execute(
             "UPDATE bets_tracked SET status='Void', profit_loss=0, settled_at=datetime('now') WHERE id=?",
             (bet_id,)
         )
     return True
+
+
+# ── Match snapshots (ML training data) ───────────────────────────────────────
+
+def save_match_snapshot(
+    event_id:        str,
+    match_date:      str,
+    league:          str,
+    sport_key:       str,
+    home_team:       str,
+    away_team:       str,
+    scan_date:       str,
+    strategy_score:  int   = 6,
+    pin_home_prob:   float = None,
+    pin_draw_prob:   float = None,
+    pin_away_prob:   float = None,
+    pin_over25_prob: float = None,
+    pin_under25_prob:float = None,
+    pin_ht05_prob:   float = None,
+    pin_ht15_prob:   float = None,
+    db_path=None,
+) -> int:
+    """
+    Save or refresh the pre-game probability snapshot for a match.
+    One row per event_id (UPSERT). Returns row ID or -1 if event_id is empty.
+    """
+    if not event_id:
+        return -1
+    with _conn(db_path) as con:
+        cur = con.execute("""
+            INSERT INTO match_snapshots
+              (event_id, match_date, league, sport_key, home_team, away_team,
+               scan_date, strategy_score,
+               pin_home_prob, pin_draw_prob, pin_away_prob,
+               pin_over25_prob, pin_under25_prob, pin_ht05_prob, pin_ht15_prob)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(event_id) DO UPDATE SET
+              scan_date        = excluded.scan_date,
+              pin_home_prob    = excluded.pin_home_prob,
+              pin_draw_prob    = excluded.pin_draw_prob,
+              pin_away_prob    = excluded.pin_away_prob,
+              pin_over25_prob  = excluded.pin_over25_prob,
+              pin_under25_prob = excluded.pin_under25_prob,
+              pin_ht05_prob    = excluded.pin_ht05_prob,
+              pin_ht15_prob    = excluded.pin_ht15_prob,
+              strategy_score   = excluded.strategy_score
+        """, (
+            event_id, match_date, league, sport_key, home_team, away_team,
+            scan_date, strategy_score,
+            pin_home_prob, pin_draw_prob, pin_away_prob,
+            pin_over25_prob, pin_under25_prob, pin_ht05_prob, pin_ht15_prob,
+        ))
+        return cur.lastrowid
+
+
+def update_snapshot_result(
+    event_id:        str,
+    final_home_goals: int,
+    final_away_goals: int,
+    ht_home_goals:   int | None = None,
+    ht_away_goals:   int | None = None,
+    corner_count:    int | None = None,
+    db_path=None,
+):
+    """Fill in actual results and compute outcome labels for ML."""
+    if not event_id:
+        return
+    total    = final_home_goals + final_away_goals
+    ht_total = (ht_home_goals or 0) + (ht_away_goals or 0)
+    result_1x2 = ("1" if final_home_goals > final_away_goals
+                  else ("2" if final_away_goals > final_home_goals else "X"))
+    result_over25    = int(total > 2)
+    result_ht_over05 = int(ht_total > 0) if ht_home_goals is not None else None
+    result_ht_over15 = int(ht_total > 1) if ht_home_goals is not None else None
+
+    with _conn(db_path) as con:
+        con.execute("""
+            UPDATE match_snapshots SET
+              final_home_goals = ?,
+              final_away_goals = ?,
+              ht_home_goals    = COALESCE(?, ht_home_goals),
+              ht_away_goals    = COALESCE(?, ht_away_goals),
+              corner_count     = COALESCE(?, corner_count),
+              result_1x2       = ?,
+              result_over25    = ?,
+              result_ht_over05 = COALESCE(?, result_ht_over05),
+              result_ht_over15 = COALESCE(?, result_ht_over15),
+              settled_at       = datetime('now')
+            WHERE event_id = ?
+        """, (
+            final_home_goals, final_away_goals,
+            ht_home_goals, ht_away_goals, corner_count,
+            result_1x2, result_over25,
+            result_ht_over05, result_ht_over15,
+            event_id,
+        ))
+
+
+def get_snapshot_stats(db_path=None) -> dict:
+    """Return high-level ML dataset stats."""
+    with _conn(db_path) as con:
+        row = con.execute("""
+            SELECT
+                COUNT(*)                                        AS total,
+                SUM(CASE WHEN settled_at IS NOT NULL THEN 1 END) AS settled,
+                SUM(result_over25)                              AS over25_wins,
+                SUM(CASE WHEN result_over25 = 0 THEN 1 END)    AS over25_losses,
+                SUM(result_ht_over05)                           AS ht05_wins,
+                AVG(pin_over25_prob)                            AS avg_pin_over25
+            FROM match_snapshots
+        """).fetchone()
+    return dict(row)
+
+
+# ── Team form cache ───────────────────────────────────────────────────────────
+
+def upsert_team_form(
+    team_id:           int,
+    team_name:         str,
+    avg_goals_scored:  float,
+    avg_goals_conceded: float,
+    games_analyzed:    int,
+    league_id:         int   = None,
+    last_5_results:    list  = None,
+    db_path=None,
+):
+    """Cache api-football team form. Keyed by (team_id, today's date)."""
+    from datetime import date
+    fetch_date = date.today().isoformat()
+    with _conn(db_path) as con:
+        con.execute("""
+            INSERT INTO team_form
+              (team_id, team_name, league_id, fetch_date,
+               games_analyzed, avg_goals_scored, avg_goals_conceded, last_5_json)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(team_id, fetch_date) DO UPDATE SET
+              avg_goals_scored   = excluded.avg_goals_scored,
+              avg_goals_conceded = excluded.avg_goals_conceded,
+              games_analyzed     = excluded.games_analyzed,
+              last_5_json        = excluded.last_5_json
+        """, (
+            team_id, team_name, league_id, fetch_date,
+            games_analyzed, avg_goals_scored, avg_goals_conceded,
+            json.dumps(last_5_results or []),
+        ))
+
+
+def get_team_form_cached(team_id: int, max_age_hours: int = 24, db_path=None) -> dict | None:
+    """Return cached form if fresh, else None (caller should fetch from API)."""
+    with _conn(db_path) as con:
+        row = con.execute("""
+            SELECT * FROM team_form
+            WHERE team_id = ?
+              AND datetime(fetch_date) >= datetime('now', ? || ' hours')
+            ORDER BY fetch_date DESC LIMIT 1
+        """, (team_id, f"-{max_age_hours}")).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["last_5_results"] = json.loads(d.pop("last_5_json") or "[]")
+    except Exception:
+        d["last_5_results"] = []
+    return d
+
+
+# ── League stats ──────────────────────────────────────────────────────────────
+
+def upsert_league_stats(league: str, season: str, stats: dict, db_path=None):
+    """
+    Update rolling league averages from accumulated snapshot data.
+    stats keys: avg_goals, avg_ht_goals, avg_corners, over_25_rate,
+                ht_over_05_rate, ht_over_15_rate, sample_size
+    """
+    with _conn(db_path) as con:
+        con.execute("""
+            INSERT INTO league_stats
+              (league, season, sample_size, avg_goals, avg_ht_goals, avg_corners,
+               over_25_rate, ht_over_05_rate, ht_over_15_rate, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))
+            ON CONFLICT(league, season) DO UPDATE SET
+              sample_size     = excluded.sample_size,
+              avg_goals       = excluded.avg_goals,
+              avg_ht_goals    = excluded.avg_ht_goals,
+              avg_corners     = excluded.avg_corners,
+              over_25_rate    = excluded.over_25_rate,
+              ht_over_05_rate = excluded.ht_over_05_rate,
+              ht_over_15_rate = excluded.ht_over_15_rate,
+              updated_at      = excluded.updated_at
+        """, (
+            league, season,
+            stats.get("sample_size", 0),
+            stats.get("avg_goals"),
+            stats.get("avg_ht_goals"),
+            stats.get("avg_corners"),
+            stats.get("over_25_rate"),
+            stats.get("ht_over_05_rate"),
+            stats.get("ht_over_15_rate"),
+        ))
+
+
+def get_league_stats(league: str, db_path=None) -> dict | None:
+    """Return most recent season stats for a league, or None if no data yet."""
+    with _conn(db_path) as con:
+        row = con.execute("""
+            SELECT * FROM league_stats
+            WHERE league = ?
+            ORDER BY updated_at DESC LIMIT 1
+        """, (league,)).fetchone()
+    return dict(row) if row else None
+
+
+def compute_and_save_league_stats(league: str, db_path=None):
+    """
+    Compute rolling averages from settled match_snapshots and save to league_stats.
+    Called periodically (e.g. after each auto-settle batch).
+    Requires at least 10 settled games before writing.
+    """
+    from datetime import date
+    season = _current_season()
+    with _conn(db_path) as con:
+        row = con.execute("""
+            SELECT
+                COUNT(*)                              AS n,
+                AVG(final_home_goals + final_away_goals)             AS avg_goals,
+                AVG(COALESCE(ht_home_goals,0) + COALESCE(ht_away_goals,0)) AS avg_ht_goals,
+                AVG(corner_count)                     AS avg_corners,
+                AVG(CAST(result_over25 AS REAL))      AS over_25_rate,
+                AVG(CAST(result_ht_over05 AS REAL))   AS ht_over_05_rate,
+                AVG(CAST(result_ht_over15 AS REAL))   AS ht_over_15_rate
+            FROM match_snapshots
+            WHERE league = ? AND settled_at IS NOT NULL
+        """, (league,)).fetchone()
+    if not row or (row["n"] or 0) < 10:
+        return
+    upsert_league_stats(league, season, {
+        "sample_size":     row["n"],
+        "avg_goals":       row["avg_goals"],
+        "avg_ht_goals":    row["avg_ht_goals"],
+        "avg_corners":     row["avg_corners"],
+        "over_25_rate":    row["over_25_rate"],
+        "ht_over_05_rate": row["ht_over_05_rate"],
+        "ht_over_15_rate": row["ht_over_15_rate"],
+    }, db_path=db_path)
+    print(f"[DB] League stats updated: {league} ({row['n']} games)")
+
+
+def _current_season() -> str:
+    """Return current season string e.g. '2025-26'."""
+    from datetime import date
+    y = date.today().year
+    m = date.today().month
+    start = y if m >= 7 else y - 1
+    return f"{start}-{str(start + 1)[-2:]}"

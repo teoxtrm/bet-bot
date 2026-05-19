@@ -253,10 +253,9 @@ async def page_live(request: Request, username=Depends(get_current_user)):
                                        context=base_ctx(username))
 
 
-@app.get("/tipster", response_class=HTMLResponse)
-async def page_tipster(request: Request, username=Depends(get_current_user)):
-    return templates.TemplateResponse(request=request, name="tipster.html",
-                                       context=base_ctx(username))
+@app.get("/tipster")
+async def page_tipster_redirect():
+    return RedirectResponse("/pregame")
 
 
 @app.get("/history", response_class=HTMLResponse)

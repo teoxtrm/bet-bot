@@ -338,6 +338,114 @@ async def delete_user(username=Depends(get_current_user),
     return RedirectResponse("/admin", status_code=303)
 
 
+@app.get("/api/admin/sources/health")
+async def admin_sources_health(username=Depends(get_current_user_api)):
+    users = _load_users()
+    if not users.get(username, {}).get("is_admin"):
+        raise HTTPException(status_code=403)
+
+    import requests as _req
+    import time as _time
+
+    env = user_env(username)
+    results = []
+
+    def _ping(name: str, label: str, fn):
+        t0 = _time.monotonic()
+        try:
+            r = fn()
+            ms = int((_time.monotonic() - t0) * 1000)
+            r["name"] = name
+            r["label"] = label
+            r["ms"] = ms
+            return r
+        except Exception as exc:
+            ms = int((_time.monotonic() - t0) * 1000)
+            return {"name": name, "label": label, "status": "error",
+                    "error": str(exc)[:120], "ms": ms}
+
+    # ── Odds API ──────────────────────────────────────────────────────────────
+    def _check_odds_api():
+        key = env.get("ODDS_API_KEY", "")
+        if not key:
+            return {"status": "no_key", "note": "API key not configured"}
+        resp = _req.get(
+            "https://api.the-odds-api.com/v4/sports",
+            params={"apiKey": key},
+            timeout=8,
+        )
+        if resp.status_code == 401:
+            return {"status": "error", "error": "Invalid API key"}
+        resp.raise_for_status()
+        remaining = resp.headers.get("x-requests-remaining", "?")
+        used = resp.headers.get("x-requests-used", "?")
+        return {"status": "ok", "remaining": remaining, "used": used}
+
+    # ── api-football ──────────────────────────────────────────────────────────
+    def _check_api_football():
+        key = env.get("API_FOOTBALL_KEY", "")
+        if not key:
+            return {"status": "no_key", "note": "API key not configured"}
+        resp = _req.get(
+            "https://v3.football.api-sports.io/status",
+            headers={"x-apisports-key": key},
+            timeout=8,
+        )
+        if resp.status_code == 401:
+            return {"status": "error", "error": "Invalid API key"}
+        resp.raise_for_status()
+        data = resp.json().get("response", {})
+        req = data.get("requests", {})
+        return {
+            "status": "ok",
+            "remaining": str(req.get("limit_day", "?") - req.get("current", 0))
+                         if isinstance(req.get("limit_day"), int) else "?",
+            "used": str(req.get("current", "?")),
+            "limit": str(req.get("limit_day", "?")),
+        }
+
+    # ── football-data.org ─────────────────────────────────────────────────────
+    def _check_football_data():
+        key = env.get("FOOTBALL_DATA_KEY", "")
+        if not key:
+            return {"status": "no_key", "note": "API key not configured"}
+        resp = _req.get(
+            "https://api.football-data.org/v4/competitions",
+            headers={"X-Auth-Token": key},
+            timeout=8,
+        )
+        if resp.status_code == 403:
+            return {"status": "error", "error": "Invalid API key"}
+        resp.raise_for_status()
+        remaining = resp.headers.get("X-Requests-Available-Minute", "?")
+        return {"status": "ok", "remaining": remaining, "note": "per-minute quota shown"}
+
+    # ── FBref (soccerdata / direct HTTP) ──────────────────────────────────────
+    def _check_fbref():
+        resp = _req.get(
+            "https://fbref.com/en/",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; bet-bot health-check/1.0)"},
+            timeout=8,
+            allow_redirects=True,
+        )
+        if resp.status_code == 200:
+            return {"status": "ok", "note": "Site reachable (scraping)"}
+        return {"status": "degraded", "note": f"HTTP {resp.status_code}"}
+
+    loop = asyncio.get_event_loop()
+    checks = [
+        ("odds_api",       "Odds API",           _check_odds_api),
+        ("api_football",   "api-football",        _check_api_football),
+        ("football_data",  "football-data.org",   _check_football_data),
+        ("fbref",          "FBref (scraping)",    _check_fbref),
+    ]
+    for name, label, fn in checks:
+        r = await loop.run_in_executor(None, lambda f=fn, n=name, l=label: _ping(n, l, f))
+        results.append(r)
+
+    return JSONResponse({"sources": results, "checked_at": datetime.now().isoformat()})
+
+
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket, bb_session: str = Cookie(default="")):
@@ -522,13 +630,26 @@ def _run_pregame_scan(username: str, league_key: str):
                     "away":   p_1x2.get("away")       if p_1x2  else None,
                 })
 
-                # Placeholders for future sources — will be set "ok" when integrated
-                health.missing("team_form", "not yet integrated")
+                # Team form: fetch once per team per day; mark health accordingly
+                from scrapers.team_form import fetch_team_form as _fetch_form
+                try:
+                    _home_form, _away_form, _form_src = _fetch_form(
+                        ev.get("home_team", ""), ev.get("away_team", ""),
+                        sport_key, env, db_path,
+                    )
+                    if _form_src:
+                        health.ok("team_form", note=_form_src)
+                    else:
+                        health.missing("team_form", note="league not covered by form provider")
+                except Exception as _fe:
+                    _home_form = _away_form = None
+                    health.failed("team_form", error=str(_fe)[:80])
 
                 _evdata.append({"event": ev, "p_1x2": p_1x2, "p_ou": p_ou,
                                  "p_ht": p_ht, "p_ht15": p_ht15,
                                  "league": lkey, "tier": _tier, "strategy_score": _score,
                                  "steam_moves": _steam_moves,
+                                 "home_form": _home_form, "away_form": _away_form,
                                  "data_flags": health.flags()})
                 save_match_snapshot(
                     event_id        = ev.get("id", ""),

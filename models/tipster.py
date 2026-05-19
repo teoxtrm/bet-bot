@@ -26,6 +26,9 @@ TIER_COLORS = {
     "COMBO":  "#e17055",
 }
 
+# Markets where form xG is relevant
+_GOAL_MARKETS = {"Over 2.5", "Over 1.5", "Under 2.5", "Under 1.5", "HT Over 0.5", "HT Over 1.5"}
+
 # Minimum Pinnacle no-vig probability to even consider a market
 _MARKET_FLOOR = {
     "Over 1.5":    0.75,
@@ -238,6 +241,8 @@ def score_event(
     p_ht15:      dict | None = None,
     steam_moves: list        = None,
     data_flags:  dict        = None,
+    home_form:   dict | None = None,
+    away_form:   dict | None = None,
 ) -> list["TipsterPick"]:
     """Score one event. Returns qualifying TipsterPick objects (singles + combos)."""
     from utils.steam import steam_markets as _steam_mkts
@@ -262,6 +267,24 @@ def score_event(
 
     over_25_prob = p_ou.get("over_prob") if p_ou else None
     xg = _infer_xg(over_25_prob)
+
+    # Form-based xG validation
+    _form_bonus  = 0.0
+    _form_signal = None
+    if home_form and away_form:
+        h_xg = (home_form.get("avg_goals_scored", 1.2) + away_form.get("avg_goals_conceded", 1.1)) / 2
+        a_xg = (away_form.get("avg_goals_scored", 1.2) + home_form.get("avg_goals_conceded", 1.1)) / 2
+        _form_xg = round(h_xg + a_xg, 2)
+        diff = _form_xg - xg
+        if abs(diff) <= 0.6:
+            _form_bonus  = 0.02
+            _form_signal = f"Form xG {_form_xg} confirms Pinnacle"
+        elif diff > 0.6:
+            _form_bonus  = 0.01
+            _form_signal = f"Form xG {_form_xg} (attacking game expected)"
+        else:
+            _form_bonus  = -0.02
+            _form_signal = f"Form xG {_form_xg} (defensive game expected)"
 
     checks = []
 
@@ -322,6 +345,11 @@ def score_event(
         best_odds, best_bm = _best_odds_for(event, mkt_key, side, pt)
         if best_odds <= 1.0:
             continue
+
+        # Apply form xG bonus/penalty for goal-related markets
+        if _form_signal and market in _GOAL_MARKETS:
+            conf = min(0.95, max(0.0, conf + _form_bonus))
+            signals = list(signals) + [_form_signal]
 
         if market == "Over 2.5":
             over_pool["Over 2.5"] = {"conf": conf, "odds": best_odds, "bm": best_bm}
@@ -485,6 +513,8 @@ def generate_picks(
             p_ht15      = item.get("p_ht15"),
             steam_moves = item.get("steam_moves", []),
             data_flags  = item.get("data_flags", {}),
+            home_form   = item.get("home_form"),
+            away_form   = item.get("away_form"),
         )
         all_picks.extend(picks)
 

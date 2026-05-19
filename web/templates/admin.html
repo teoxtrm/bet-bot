@@ -70,5 +70,93 @@
     Ο χρήστης θα πρέπει να βάλει τα δικά του API keys στο /settings μετά την πρώτη είσοδο.
   </p>
 
+  <!-- Data Source Health -->
+  <div class="bg-card rounded-xl overflow-hidden">
+    <div class="px-4 py-3 border-b border-muted flex items-center justify-between">
+      <span class="text-sm font-semibold text-dim uppercase">Data Sources</span>
+      <button id="refreshBtn" onclick="refreshHealth()"
+        class="text-xs text-blue-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-muted">
+        ↻ Refresh
+      </button>
+    </div>
+    <div id="sourcesGrid" class="p-4 grid grid-cols-1 gap-3">
+      <div class="text-dim text-sm text-center py-4">Loading...</div>
+    </div>
+    <div class="px-4 pb-3 text-right">
+      <span id="checkedAt" class="text-dim text-xs"></span>
+    </div>
+  </div>
+
 </div>
+
+<script>
+const _statusColors = {
+  ok:        { dot: "#00b894", bg: "rgba(0,184,148,0.10)", label: "OK" },
+  degraded:  { dot: "#fdcb6e", bg: "rgba(253,203,110,0.10)", label: "Degraded" },
+  error:     { dot: "#d63031", bg: "rgba(214,48,49,0.10)", label: "Error" },
+  no_key:    { dot: "#636e72", bg: "rgba(99,110,114,0.10)", label: "No Key" },
+};
+
+function _statusInfo(status) {
+  return _statusColors[status] || { dot: "#636e72", bg: "rgba(99,110,114,0.10)", label: status };
+}
+
+function _buildCard(src) {
+  const si = _statusInfo(src.status);
+  const ms = src.ms != null ? `<span class="text-dim text-xs">${src.ms}ms</span>` : "";
+
+  let meta = "";
+  if (src.remaining != null && src.status === "ok") {
+    const usedPart = src.used != null ? ` / ${src.used} used` : "";
+    const limitPart = src.limit  != null ? ` of ${src.limit}` : "";
+    meta += `<span class="text-xs text-dim">${src.remaining} remaining${limitPart}${usedPart}</span>`;
+  }
+  if (src.note && src.status !== "ok") {
+    meta += `<span class="text-xs text-dim">${src.note}</span>`;
+  }
+  if (src.error) {
+    meta += `<span class="text-xs text-red-400">${src.error}</span>`;
+  }
+
+  return `
+    <div class="flex items-start gap-3 rounded-lg px-3 py-2.5"
+         style="background:${si.bg}; border:1px solid ${si.dot}22">
+      <span class="mt-1 w-2.5 h-2.5 rounded-full flex-shrink-0"
+            style="background:${si.dot}; box-shadow:0 0 6px ${si.dot}88"></span>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-medium text-white">${src.label}</span>
+          <span class="text-xs px-1.5 py-0.5 rounded" style="background:${si.dot}22; color:${si.dot}">${si.label}</span>
+          ${ms}
+        </div>
+        <div class="flex flex-col gap-0.5 mt-0.5">${meta}</div>
+      </div>
+    </div>`;
+}
+
+async function refreshHealth() {
+  const grid = document.getElementById("sourcesGrid");
+  const btn  = document.getElementById("refreshBtn");
+  btn.textContent = "↻ Checking…";
+  btn.disabled = true;
+  grid.innerHTML = '<div class="text-dim text-sm text-center py-4">Checking sources…</div>';
+  try {
+    const res = await fetch("/api/admin/sources/health");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    grid.innerHTML = data.sources.map(_buildCard).join("");
+    const dt = new Date(data.checked_at);
+    document.getElementById("checkedAt").textContent =
+      "Checked at " + dt.toLocaleTimeString();
+  } catch (e) {
+    grid.innerHTML = `<div class="text-red-400 text-sm text-center py-4">Error: ${e.message}</div>`;
+  } finally {
+    btn.textContent = "↻ Refresh";
+    btn.disabled = false;
+  }
+}
+
+// Auto-load on page open
+refreshHealth();
+</script>
 {% endblock %}

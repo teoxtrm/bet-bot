@@ -57,6 +57,7 @@ class TipsterPick:
     signals:        list[str] = field(default_factory=list)
     is_combo:       bool = False
     stake:          float = 0.0
+    data_flags:     dict  = field(default_factory=dict)
 
     @property
     def tier(self) -> str:
@@ -236,11 +237,22 @@ def score_event(
     p_ht:        dict | None = None,
     p_ht15:      dict | None = None,
     steam_moves: list        = None,
+    data_flags:  dict        = None,
 ) -> list["TipsterPick"]:
     """Score one event. Returns qualifying TipsterPick objects (singles + combos)."""
     from utils.steam import steam_markets as _steam_mkts
+    from scrapers.data_health import EventHealth
     from config import STEAM_CONFIDENCE_BOOST
     _steam_set = _steam_mkts(steam_moves)
+
+    # Confidence penalty for missing optional sources
+    _health = EventHealth()
+    _health._results = {}
+    if data_flags:
+        from scrapers.data_health import SourceResult
+        for src, st in data_flags.items():
+            _health._results[src] = SourceResult(src, st)
+    _conf_penalty = _health.confidence_penalty()
     picks = []
     home  = event.get("home_team", "")
     away  = event.get("away_team", "")
@@ -335,6 +347,7 @@ def score_event(
                 conf = min(0.95, conf + STEAM_CONFIDENCE_BOOST)
                 signals.append(steam_sig["label"])
 
+        conf = max(0.0, conf - _conf_penalty)
         if conf < MIN_CONF:
             continue
 
@@ -344,7 +357,7 @@ def score_event(
                 date=dt, league=league, event_id=eid,
                 market=market, confidence=conf, pinnacle_prob=prob,
                 inferred_xg=xg, best_odds=best_odds, best_bookmaker=best_bm,
-                signals=signals,
+                signals=signals, data_flags=data_flags or {},
             ))
 
     # BTTS from soft-book odds (no Pinnacle line)
@@ -471,6 +484,7 @@ def generate_picks(
             p_ht        = item.get("p_ht"),
             p_ht15      = item.get("p_ht15"),
             steam_moves = item.get("steam_moves", []),
+            data_flags  = item.get("data_flags", {}),
         )
         all_picks.extend(picks)
 

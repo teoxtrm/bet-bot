@@ -490,13 +490,27 @@ def _run_pregame_scan(username: str, league_key: str):
                 return _rows, _vrows, _tgts, _evdata
             events = [e for e in events if _in_window(e.get("commence",""), cutoff_from, cutoff_to)]
             for ev in events:
+                from scrapers.data_health import EventHealth
+                health = EventHealth()
+
                 p_1x2  = get_pinnacle_no_vig_probs(ev)
                 p_ou   = get_pinnacle_no_vig_totals(ev, 2.5)
                 p_ht   = get_pinnacle_no_vig_ht_totals(ev, 0.5)
                 p_ht15 = get_pinnacle_no_vig_ht_totals(ev, 1.5)
+
+                # Record Pinnacle health — critical source
+                health.ok("odds_api")
+                if p_1x2 and p_ou:
+                    health.ok("pinnacle")
+                elif p_ou:
+                    health.missing("pinnacle", "no 1X2 line")
+                else:
+                    health.missing("pinnacle", "no totals line")
+
                 _league_prof = OKL.get(sport_key, {})
                 _tier  = _league_prof.get("tier", 2)
                 _score = _league_prof.get("strategy_score", 6)
+
                 # Steam detection: compare current Pinnacle probs vs last stored snapshot
                 from utils.steam import detect_steam
                 _prev_probs  = get_event_prev_probs(ev.get("id", ""), db_path=db_path)
@@ -507,10 +521,15 @@ def _run_pregame_scan(username: str, league_key: str):
                     "home":   p_1x2.get("home")       if p_1x2  else None,
                     "away":   p_1x2.get("away")       if p_1x2  else None,
                 })
+
+                # Placeholders for future sources — will be set "ok" when integrated
+                health.missing("team_form", "not yet integrated")
+
                 _evdata.append({"event": ev, "p_1x2": p_1x2, "p_ou": p_ou,
                                  "p_ht": p_ht, "p_ht15": p_ht15,
                                  "league": lkey, "tier": _tier, "strategy_score": _score,
-                                 "steam_moves": _steam_moves})
+                                 "steam_moves": _steam_moves,
+                                 "data_flags": health.flags()})
                 save_match_snapshot(
                     event_id        = ev.get("id", ""),
                     match_date      = ev.get("commence", "")[:10],

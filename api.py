@@ -421,24 +421,11 @@ async def admin_sources_health(username=Depends(get_current_user_api)):
         remaining = resp.headers.get("X-Requests-Available-Minute", "?")
         return {"status": "ok", "remaining": remaining, "note": "per-minute quota shown"}
 
-    # ── FBref (soccerdata / direct HTTP) ──────────────────────────────────────
-    def _check_fbref():
-        resp = _req.get(
-            "https://fbref.com/en/",
-            headers={"User-Agent": "Mozilla/5.0 (compatible; bet-bot health-check/1.0)"},
-            timeout=8,
-            allow_redirects=True,
-        )
-        if resp.status_code == 200:
-            return {"status": "ok", "note": "Site reachable (scraping)"}
-        return {"status": "degraded", "note": f"HTTP {resp.status_code}"}
-
     loop = asyncio.get_event_loop()
     checks = [
         ("odds_api",       "Odds API",           _check_odds_api),
         ("api_football",   "api-football",        _check_api_football),
         ("football_data",  "football-data.org",   _check_football_data),
-        ("fbref",          "FBref (scraping)",    _check_fbref),
     ]
     for name, label, fn in checks:
         r = await loop.run_in_executor(None, lambda f=fn, n=name, l=label: _ping(n, l, f))
@@ -684,6 +671,7 @@ def _run_pregame_scan(username: str, league_key: str):
                 except Exception as _fe:
                     _home_form = _away_form = None
                     health.failed("team_form", error=str(_fe)[:80])
+                    print(f"[TeamForm] error for {ev.get('home_team')} vs {ev.get('away_team')}: {_fe}")
 
                 _evdata.append({"event": ev, "p_1x2": p_1x2, "p_ou": p_ou,
                                  "p_ht": p_ht, "p_ht15": p_ht15,

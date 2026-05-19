@@ -116,6 +116,17 @@ def load_league_scan(sport_key: str, user_dir=None) -> dict | None:
         return None
 
 
+def load_all_league_scans(user_dir=None) -> dict:
+    """Return all today's cached league scans as {sport_key: entry}."""
+    _, league_file = _paths(user_dir)
+    today = date.today().isoformat()
+    try:
+        existing = json.loads(league_file.read_text(encoding="utf-8"))
+        return {sk: v for sk, v in existing.items() if v.get("date") == today}
+    except Exception:
+        return {}
+
+
 def clear_league_cache(user_dir=None):
     """Wipe the per-league cache."""
     _, league_file = _paths(user_dir)

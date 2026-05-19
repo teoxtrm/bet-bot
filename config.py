@@ -24,6 +24,10 @@ O25_FLAG   = 0.58            # Flag if P(Over 2.5) >= this
 ODDS_API_DAILY_BUDGET = 20   # Max Odds API credits/day (free tier: 500/month)
 APIFB_DAILY_BUDGET    = 80   # Max API-Football req/day (free: 100/day; 20 reserved for live)
 
+# ── Steam move detection ─────────────────────────────────────────────────────
+STEAM_MOVE_THRESHOLD = 0.07  # Pinnacle prob shift > 7% between scans = sharp money signal
+STEAM_CONFIDENCE_BOOST = 0.03  # Confidence bonus when steam detected on a market
+
 # ── Legacy: value edge threshold (still used by value_calculator) ─────────────
 MIN_VALUE_EDGE = 0.05        # 5% edge vs Pinnacle no-vig
 

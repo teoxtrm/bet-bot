@@ -181,7 +181,20 @@ def generate_watchlist(
         ht_15 = p_ht15.get("over_prob") if p_ht15 else None
 
         live_score = score_live_potential(over_25, ht_05, ht_15, strategy_score)
+
+        # Steam boost: sharp money on HT/Over markets → game is more interesting live
+        from utils.steam import steam_markets as _steam_mkts
+        _steam = _steam_mkts(item.get("steam_moves", []))
+        if "HT Over 0.5" in _steam or "HT Over 1.5" in _steam:
+            live_score = min(1.0, live_score + 0.08)
+        elif "Over 2.5" in _steam:
+            live_score = min(1.0, live_score + 0.05)
+
         ht_tip, live_action = _live_action(ht_05, ht_15, over_25)
+
+        from utils.steam import format_steam_short
+        _steam_label = format_steam_short(item.get("steam_moves", []))
+        _action_full = (live_action + f"  {_steam_label}").strip() if _steam_label else live_action
 
         games.append(WatchlistGame(
             match        = f"{ev.get('home_team','')} vs {ev.get('away_team','')}",
@@ -195,7 +208,7 @@ def generate_watchlist(
             ht_15_prob   = ht_15,
             live_score   = live_score,
             ht_tip       = ht_tip,
-            live_action  = live_action,
+            live_action  = _action_full,
         ))
 
     games.sort(key=lambda g: -g.live_score)

@@ -259,20 +259,25 @@ function renderLive(results) {
     const timeStr = m.commence ? m.commence.substring(11, 16) : '—';
     const watched = _isWatched(m.home_team || '', m.away_team || '');
     const watchTip = watched ? _watchedTip(m.home_team || '', m.away_team || '') : null;
+    const steamMoves = m.steam_moves || [];
+    const steamMkts  = new Set(steamMoves.map(s => s.market));
 
     const vbets = m.value_bets || [];
     const best  = vbets[0];
     const o25prob = m.live_over_prob != null ? (m.live_over_prob * 100).toFixed(1) + '%' : '—';
-    rows.push(buildRow(m, timeStr, 'Over 2.5', o25prob, sot, corners, poss, best, vbets.length > 0, false, watched, watchTip));
+    const o25steam = steamMkts.has('Over 2.5');
+    rows.push(buildRow(m, timeStr, 'Over 2.5', o25prob, sot, corners, poss, best, vbets.length > 0, false, watched, watchTip, o25steam));
 
     if ((m.minute || 0) <= 45) {
       const ht05b = (m.ht_05_bets || [])[0];
       const ht05p = m.ht_05_prob != null ? (m.ht_05_prob * 100).toFixed(1) + '%' : '—';
-      rows.push(buildRow(m, '↳', 'O0.5 HT', ht05p, '', '', '', ht05b, !!(m.ht_05_bets || []).length, true, watched, watchTip));
+      const ht05steam = steamMkts.has('HT Over 0.5');
+      rows.push(buildRow(m, '↳', 'O0.5 HT', ht05p, '', '', '', ht05b, !!(m.ht_05_bets || []).length, true, watched, watchTip, ht05steam));
 
       const ht15b = (m.ht_15_bets || [])[0];
       const ht15p = m.ht_15_prob != null ? (m.ht_15_prob * 100).toFixed(1) + '%' : '—';
-      rows.push(buildRow(m, '↳', 'O1.5 HT', ht15p, '', '', '', ht15b, !!(m.ht_15_bets || []).length, true, watched, watchTip));
+      const ht15steam = steamMkts.has('HT Over 1.5');
+      rows.push(buildRow(m, '↳', 'O1.5 HT', ht15p, '', '', '', ht15b, !!(m.ht_15_bets || []).length, true, watched, watchTip, ht15steam));
     }
   });
 
@@ -284,7 +289,7 @@ function renderLive(results) {
   tbody.innerHTML = rows.map(r => r.html).join('');
 }
 
-function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValue, isHT, watched, watchTip) {
+function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValue, isHT, watched, watchTip, hasSteam) {
   const score = `${m.home_score}–${m.away_score}`;
   const min   = m.minute != null ? m.minute + "'" : '—';
   const bm    = bestBet ? bestBet.bookmaker       : '—';
@@ -297,6 +302,8 @@ function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValu
     const sotn = parseInt(sot);
     status    = !isNaN(sotn) && sotn >= 3 ? 'HIGH CONF!' : 'VALUE!';
     statusCls = !isNaN(sotn) && sotn >= 3 ? 'text-pink-400 font-bold' : 'text-green font-bold';
+  } else if (hasSteam) {
+    status = '🔥 STEAM'; statusCls = 'text-orange-400 font-bold';
   } else if (watched && !isHT) {
     status = '👁 WATCH'; statusCls = 'text-yellow font-semibold';
   }
@@ -305,13 +312,14 @@ function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValu
   const watchBadge = watched && !isHT && watchTip
     ? `<span class="ml-1 text-xs text-yellow opacity-80">[${watchTip}]</span>` : '';
 
-  // row background: value > watched > ht sub-row > normal
+  // row background: value > steam > watched > ht sub-row > normal
   let rowCls = isHT ? 'bg-white/[0.02]' : '';
+  if (hasSteam)         rowCls = 'bg-orange-900/10 border-l-2 border-orange-400';
   if (watched && !isHT) rowCls = 'bg-yellow/5 border-l-2 border-yellow';
   if (hasValue)         rowCls = 'bg-green/5 border-l-2 border-green';
 
   const matchName = isHT ? '' : `${m.home_team} vs ${m.away_team}`;
-  const priority  = hasValue ? 2 : (watched ? 1 : 0);
+  const priority  = hasValue ? 3 : (hasSteam ? 2 : (watched ? 1 : 0));
 
   const html = `<tr class="${rowCls} border-b border-muted/20 hover:bg-white/5">
     <td class="px-2 py-2 text-center text-dim text-xs">${timeStr}</td>

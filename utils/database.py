@@ -550,6 +550,54 @@ def save_match_snapshot(
         return cur.lastrowid
 
 
+def get_event_prev_probs(event_id: str, db_path=None) -> dict | None:
+    """Return stored Pinnacle probs for an event (for steam detection). None if not found."""
+    if not event_id:
+        return None
+    with _conn(db_path) as con:
+        row = con.execute("""
+            SELECT pin_home_prob, pin_draw_prob, pin_away_prob,
+                   pin_over25_prob, pin_ht05_prob, pin_ht15_prob
+            FROM match_snapshots WHERE event_id = ?
+        """, (event_id,)).fetchone()
+    if not row:
+        return None
+    return {
+        "pin_home_prob":   row[0],
+        "pin_draw_prob":   row[1],
+        "pin_away_prob":   row[2],
+        "pin_over25_prob": row[3],
+        "pin_ht05_prob":   row[4],
+        "pin_ht15_prob":   row[5],
+    }
+
+
+def get_today_snapshot_probs(db_path=None) -> dict:
+    """
+    Return all today's snapshots as {event_id: {pin_*_prob fields}}.
+    Used by live scanner to compare live Pinnacle lines against pre-game baseline.
+    """
+    from datetime import date
+    today = date.today().isoformat()
+    with _conn(db_path) as con:
+        rows = con.execute("""
+            SELECT event_id, pin_home_prob, pin_draw_prob, pin_away_prob,
+                   pin_over25_prob, pin_ht05_prob, pin_ht15_prob
+            FROM match_snapshots WHERE scan_date = ?
+        """, (today,)).fetchall()
+    result = {}
+    for row in rows:
+        result[row[0]] = {
+            "pin_home_prob":   row[1],
+            "pin_draw_prob":   row[2],
+            "pin_away_prob":   row[3],
+            "pin_over25_prob": row[4],
+            "pin_ht05_prob":   row[5],
+            "pin_ht15_prob":   row[6],
+        }
+    return result
+
+
 def update_snapshot_result(
     event_id:        str,
     final_home_goals: int,

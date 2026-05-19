@@ -267,16 +267,31 @@ def _fetch_apif_form(team_id: int, team_name: str, league_id: int, db_path: str)
         return None
 
     try:
+        # Free plan: no "last" param — fetch by season, filter FT in Python
+        today = date.today()
+        season = today.year - 1 if today.month <= 7 else today.year
         r = requests.get(
             "https://v3.football.api-sports.io/fixtures",
             headers={"x-apisports-key": api_key},
-            params={"team": team_id, "last": 6, "status": "FT"},
+            params={"team": team_id, "season": season},
             timeout=10,
         )
         if r.status_code != 200:
+            print(f"[TeamForm] APIF fixtures HTTP {r.status_code} for {team_name}")
             return None
 
-        fixtures = r.json().get("response", [])
+        resp = r.json()
+        if resp.get("errors"):
+            print(f"[TeamForm] APIF error for {team_name}: {resp['errors']}")
+            return None
+
+        # Keep only finished matches, most recent first, take last 6
+        all_fixtures = resp.get("response", [])
+        finished = [f for f in all_fixtures
+                    if f.get("fixture", {}).get("status", {}).get("short") == "FT"]
+        finished.sort(key=lambda f: f["fixture"]["date"], reverse=True)
+        fixtures = finished[:6]
+
         if not fixtures:
             return None
 
@@ -353,30 +368,6 @@ def fetch_team_form(
         if home_form is not None or away_form is not None:
             return home_form, away_form, "football_data"
 
-    # ── api-football fallback (all other leagues) ─────────────────────────────
-    if FORM_PROVIDER in ("api_football", "football_data"):
-        from utils.league_map import LEAGUE_MAP
-        from scrapers.apifootball import get_remaining as _apif_remaining
-        league_id = next(
-            (lid for lid, info in LEAGUE_MAP.items() if info.get("odds_key") == sport_key),
-            None,
-        )
-        if not league_id:
-            return None, None, None
-
-        # Guard: leave at least 60 requests for the live scanner
-        rem = _apif_remaining()
-        if rem is not None and rem < 60:
-            print(f"[TeamForm] api-football budget low ({rem} remaining) — skipping form fetch")
-            return None, None, None
-
-        home_id   = _resolve_apif_id(home_team, league_id)
-        away_id   = _resolve_apif_id(away_team, league_id)
-        home_form = _fetch_apif_form(home_id, home_team, league_id, db_path) if home_id else None
-        away_form = _fetch_apif_form(away_id, away_team, league_id, db_path) if away_id else None
-
-        if home_form is not None or away_form is not None:
-            return home_form, away_form, "api_football"
-        return None, None, None
-
+    # api-football free plan only covers seasons 2022–2024, not the current season.
+    # Fallback disabled until a working free source is found.
     return None, None, None

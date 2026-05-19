@@ -887,10 +887,16 @@ def _run_pregame_scan(username: str, league_key: str):
         scanned_keys = {sk for _, sk in items}
         for sk, cached in load_all_league_scans(udir).items():
             if sk not in scanned_keys:
-                rows.extend(cached["rows"])
-                value_rows.extend([r for r in cached["rows"] if r.get("is_value")])
-                all_targets.extend([LiveTarget(**t) for t in cached.get("targets", [])])
-                events_data.extend(cached.get("events_data", []))
+                # Re-apply time window so finished games don't bleed in from old cache
+                fresh_rows = [r for r in cached["rows"] if r.get("date", "") >= today_str]
+                fresh_evdata = [e for e in cached.get("events_data", [])
+                                if _in_window(e.get("event", {}).get("commence", ""),
+                                              cutoff_from, cutoff_to)]
+                rows.extend(fresh_rows)
+                value_rows.extend([r for r in fresh_rows if r.get("is_value")])
+                all_targets.extend([LiveTarget(**t) for t in cached.get("targets", [])
+                                    if t.get("date", "") >= today_str])
+                events_data.extend(fresh_evdata)
 
         import dataclasses
         all_targets   = score_targets(all_targets)

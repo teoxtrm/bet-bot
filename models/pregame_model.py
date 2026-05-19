@@ -31,6 +31,43 @@ def poisson_over_prob(lam: float, threshold: float) -> float:
     return 1.0 - prob_under_or_equal
 
 
+def _poisson_home_win(lh: float, la: float) -> float:
+    """P(Poisson(lh) > Poisson(la)) — home win in a Poisson match model."""
+    p = 0.0
+    for i in range(1, 11):
+        p += poisson_prob(lh, i) * sum(poisson_prob(la, j) for j in range(i))
+    return p
+
+
+def split_xg(lambda_total: float, p_home_win: float) -> tuple[float, float]:
+    """
+    Find (lambda_h, lambda_a) such that:
+      lambda_h + lambda_a = lambda_total
+      P(Poisson(lambda_h) > Poisson(lambda_a)) ≈ p_home_win
+
+    Used to derive per-team xG from Pinnacle 1X2 + Totals lines.
+    """
+    if lambda_total <= 0.1:
+        return lambda_total * 0.55, lambda_total * 0.45
+    lo, hi = 0.05, lambda_total - 0.05
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if _poisson_home_win(mid, lambda_total - mid) > p_home_win:
+            hi = mid
+        else:
+            lo = mid
+    lh = round((lo + hi) / 2, 3)
+    return lh, round(lambda_total - lh, 3)
+
+
+def btts_prob(lambda_h: float, lambda_a: float) -> float:
+    """P(both teams score) = P(home ≥ 1) × P(away ≥ 1) under independence."""
+    return round(
+        (1 - poisson_prob(lambda_h, 0)) * (1 - poisson_prob(lambda_a, 0)),
+        4,
+    )
+
+
 def calculate_pregame_probs(home: TeamStats, away: TeamStats, league_avg_goals: float = 2.65) -> dict:
     """
     Υπολογίζει πιθανότητες αγώνα βάσει φόρμας.

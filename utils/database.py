@@ -358,6 +358,37 @@ def get_stats(db_path=None) -> dict:
     return d
 
 
+def get_daily_pnl(db_path=None) -> list[dict]:
+    """
+    Returns daily and cumulative PnL for settled bets, ordered by match_date.
+    Each row: {date, daily_pnl, cumulative_pnl, wins, losses}
+    """
+    with _conn(db_path) as con:
+        rows = con.execute("""
+            SELECT
+                match_date                             AS date,
+                SUM(COALESCE(profit_loss, 0))          AS daily_pnl,
+                SUM(CASE WHEN status='Win'  THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN status='Loss' THEN 1 ELSE 0 END) AS losses
+            FROM bets_tracked
+            WHERE status IN ('Win','Loss')
+            GROUP BY match_date
+            ORDER BY match_date ASC
+        """).fetchall()
+    result = []
+    cumulative = 0.0
+    for r in rows:
+        cumulative += r["daily_pnl"]
+        result.append({
+            "date":           r["date"],
+            "daily_pnl":      round(r["daily_pnl"], 2),
+            "cumulative_pnl": round(cumulative, 2),
+            "wins":           r["wins"],
+            "losses":         r["losses"],
+        })
+    return result
+
+
 # ── Settlement ────────────────────────────────────────────────────────────────
 
 def settle_bet(

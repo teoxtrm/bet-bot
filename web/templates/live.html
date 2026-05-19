@@ -57,6 +57,10 @@
       class="text-dim hover:text-white border border-muted px-4 py-2 rounded-lg text-sm transition-colors">
       Clear
     </button>
+    <button id="btn-notif" title="Browser notifications"
+      class="text-dim hover:text-white border border-muted px-3 py-2 rounded-lg text-sm transition-colors">
+      🔔
+    </button>
     <div class="text-dim text-xs ml-auto" id="live-iter"></div>
   </div>
 
@@ -100,6 +104,43 @@
 
 {% block scripts %}
 <script>
+// ── Browser Notifications ─────────────────────────────────────────────────────
+let _notifsEnabled = localStorage.getItem('betbot_notifs') === '1';
+
+function _updateNotifBtn() {
+  const btn = document.getElementById('btn-notif');
+  if (!('Notification' in window)) { btn.style.display = 'none'; return; }
+  btn.textContent = _notifsEnabled ? '🔔' : '🔕';
+  btn.title       = _notifsEnabled ? 'Notifications ON — click to disable' : 'Notifications OFF — click to enable';
+  btn.classList.toggle('text-yellow',  _notifsEnabled);
+  btn.classList.toggle('border-yellow/40', _notifsEnabled);
+  btn.classList.toggle('text-dim',    !_notifsEnabled);
+}
+
+document.getElementById('btn-notif').addEventListener('click', async () => {
+  if (!('Notification' in window)) return;
+  if (!_notifsEnabled) {
+    const perm = await Notification.requestPermission();
+    if (perm === 'granted') {
+      _notifsEnabled = true;
+      localStorage.setItem('betbot_notifs', '1');
+      new Notification('BetBot 🔔', { body: 'Notifications enabled. You\'ll be alerted on VALUE bets.' });
+    }
+  } else {
+    _notifsEnabled = false;
+    localStorage.setItem('betbot_notifs', '0');
+  }
+  _updateNotifBtn();
+});
+
+function _fireNotif(title, body) {
+  if (!_notifsEnabled || !document.hidden) return;
+  if (Notification.permission !== 'granted') return;
+  new Notification(title, { body, icon: '/favicon.ico', tag: 'betbot-value' });
+}
+
+_updateNotifBtn();
+
 // ── Watchlist: load from today's pre-game scan ────────────────────────────────
 let _watchlist = [];  // [{home_team, away_team, ht_tip, live_action, live_score, kickoff, league}]
 
@@ -239,10 +280,28 @@ function logLine(txt) {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 connectWS(msg => {
   if (msg.type === 'live_update') {
-    renderLive(msg.data || []);
+    const data = msg.data || [];
+    renderLive(data);
     const iter = document.getElementById('live-iter');
     if (iter) iter.textContent = `Scan #${msg.iteration}  ${msg.ts || ''}`;
-    logLine(`Scan #${msg.iteration} — ${(msg.data || []).length} matches`);
+    logLine(`Scan #${msg.iteration} — ${data.length} matches`);
+
+    // Fire browser notification for each new value bet found
+    data.forEach(m => {
+      const sotn  = (m.live_stats || {}).shots_on_target;
+      const level = !isNaN(parseInt(sotn)) && parseInt(sotn) >= 3 ? 'HIGH CONF! 🔥' : 'VALUE! ✅';
+      const match = `${m.home_team} ${m.home_score}–${m.away_score} ${m.away_team} ${m.minute || ''}\'`;
+      [
+        ['Over 2.5',  m.value_bets  || []],
+        ['O0.5 HT',  m.ht_05_bets  || []],
+        ['O1.5 HT',  m.ht_15_bets  || []],
+      ].forEach(([mkt, bets]) => {
+        (bets).forEach(b => {
+          if (!b.is_value_bet) return;
+          _fireNotif(`BetBot ${level}`, `${match} | ${mkt} ${b.bookmaker} ${b.bookmaker_odds} (+${(b.value_edge*100).toFixed(0)}%)`);
+        });
+      });
+    });
   }
   if (msg.type === 'live_error') logLine('❌ ' + msg.error);
 });

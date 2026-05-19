@@ -446,6 +446,45 @@ async def admin_sources_health(username=Depends(get_current_user_api)):
     return JSONResponse({"sources": results, "checked_at": datetime.now().isoformat()})
 
 
+@app.get("/api/admin/team-form/stats")
+async def admin_team_form_stats(username=Depends(get_current_user_api)):
+    users = _load_users()
+    if not users.get(username, {}).get("is_admin"):
+        raise HTTPException(status_code=403)
+
+    from utils.database import _conn
+    db_path = str(user_db(username))
+    today   = date.today().isoformat()
+
+    with _conn(db_path) as con:
+        rows = con.execute("""
+            SELECT team_name, avg_goals_scored, avg_goals_conceded,
+                   games_analyzed, last_5_json, fetch_date
+            FROM team_form
+            WHERE fetch_date = ?
+            ORDER BY team_name ASC
+        """, (today,)).fetchall()
+
+    teams = []
+    for r in rows:
+        import json as _json
+        try:
+            last5 = _json.loads(r["last_5_json"] or "[]")
+            form_str = "".join(g["result"] for g in last5[-5:])
+        except Exception:
+            form_str = ""
+        teams.append({
+            "team":        r["team_name"],
+            "scored":      round(r["avg_goals_scored"],  2),
+            "conceded":    round(r["avg_goals_conceded"], 2),
+            "games":       r["games_analyzed"],
+            "form":        form_str,
+            "fetch_date":  r["fetch_date"],
+        })
+
+    return JSONResponse({"date": today, "count": len(teams), "teams": teams})
+
+
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket, bb_session: str = Cookie(default="")):

@@ -797,10 +797,34 @@ async def live_results(username=Depends(get_current_user_api)):
 def _live_loop(username: str, env: dict):
     for k, v in env.items():
         os.environ[k] = v
-    ls       = _user_live_status(username)
-    db_path  = str(user_db(username))
+    from models.value_calculator import calculate_stake
+    ls           = _user_live_status(username)
+    db_path      = str(user_db(username))
+    stake_method = env.get("STAKE_METHOD", "kelly")
+    bankroll     = float(env.get("BANKROLL", "1000"))
+    base_stake   = float(env.get("BASE_STAKE", "10"))
+    fixed_pct    = float(env.get("FIXED_PCT", "2"))
     # Load today's pre-game Pinnacle baseline once at loop start (steam detection)
     pregame_baseline = get_today_snapshot_probs(db_path)
+
+    def _add_stakes(results):
+        for m in results:
+            prob_map = {
+                "value_bets": m.get("live_over_prob"),
+                "ht_05_bets": m.get("ht_05_prob"),
+                "ht_15_bets": m.get("ht_15_prob"),
+            }
+            for key, prob in prob_map.items():
+                for bet in m.get(key) or []:
+                    if prob and bet.get("is_value_bet"):
+                        bet["stake"] = calculate_stake(
+                            prob, bet["bookmaker_odds"],
+                            method=stake_method, bankroll=bankroll,
+                            base_stake=base_stake, fixed_pct=fixed_pct,
+                            confidence=prob,
+                        )
+        return results
+
     while ls["running"]:
         try:
             ls["iteration"] += 1
@@ -817,6 +841,8 @@ def _live_loop(username: str, env: dict):
                 from scrapers.live_scanner import scan_once
                 results = scan_once(ls["sport_key"] or "soccer_efl_champ",
                                     pregame_baseline=pregame_baseline)
+
+            _add_stakes(results)
 
             with _state_lock:
                 _live_results[username] = results

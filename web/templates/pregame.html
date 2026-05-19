@@ -94,7 +94,7 @@
               <th class="px-3 py-2 text-center">Bookmaker</th>
               <th class="px-3 py-2 text-center">Odds</th>
               <th class="px-3 py-2 text-center">Edge</th>
-              <th id="stake-col-header" class="px-3 py-2 text-center">Stake</th>
+              <th class="px-3 py-2 text-center">Stake</th>
             </tr>
           </thead>
           <tbody id="pregame-tbody">
@@ -160,16 +160,9 @@ fetch('/api/leagues').then(r => r.json()).then(d => {
   sel.value = 'STARTER PACK';
 }).catch(() => {});
 
-// ── Stake method label ────────────────────────────────────────────────────────
-let _stakeMethod = 'kelly';
-function stakeColLabel() {
-  return { kelly: 'Kelly', fixed_pct: 'Stake %', tiered: 'Stake €' }[_stakeMethod] || 'Stake';
-}
-
 // ── Restore in-memory cache ───────────────────────────────────────────────────
 fetch('/api/scan/results').then(r => r.json()).then(d => {
   if (d.rows && d.rows.length) {
-    _stakeMethod = d.stake_method || 'kelly';
     renderTips(d.tipster_picks || []);
     renderWatchlist(d.watchlist || []);
     renderMarkets(d.rows, d.value_count || 0);
@@ -226,7 +219,6 @@ connectWS(msg => {
     const txt = msg.data.text || '';
     document.getElementById('scan-status-text').textContent = txt;
     if (msg.results) {
-      _stakeMethod = msg.results.stake_method || _stakeMethod;
       renderTips(msg.results.tipster_picks || []);
       renderWatchlist(msg.results.watchlist || []);
       renderMarkets(msg.results.rows || [], msg.results.value_count || 0);
@@ -351,7 +343,6 @@ function renderWatchlist(games) {
 function renderMarkets(rows, valueCount) {
   const tbody = document.getElementById('pregame-tbody');
   document.getElementById('markets-count').textContent = rows.length;
-  document.getElementById('stake-col-header').textContent = stakeColLabel();
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-dim py-8">No markets</td></tr>';
     return;

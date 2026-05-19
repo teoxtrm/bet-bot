@@ -31,7 +31,8 @@ load_dotenv(BASE_DIR / ".env")
 from utils.database import (auto_settle_from_api, get_all_bets, get_pending_bets,
                               get_event_prev_probs, get_stats, get_today_snapshot_probs,
                               init_db, save_match_snapshot, settle_bet, track_value_bet)
-from utils.scan_cache import (clear_league_cache, load_league_scan, load_scan,
+from utils.scan_cache import (clear_league_cache, load_all_league_scans,
+                               load_league_scan, load_scan,
                                save_league_scan, save_scan)
 
 # ── App setup ─────────────────────────────────────────────────────────────────
@@ -822,6 +823,16 @@ def _run_pregame_scan(username: str, league_key: str):
             save_league_scan(sport_key, r, evd, t, udir)
             if scan_all and idx < total - 1:
                 time.sleep(1)
+
+        # Merge in any other leagues already cached today that weren't in this scan.
+        # This means PRIME → then STARTER never loses the PRIME results.
+        scanned_keys = {sk for _, sk in items}
+        for sk, cached in load_all_league_scans(udir).items():
+            if sk not in scanned_keys:
+                rows.extend(cached["rows"])
+                value_rows.extend([r for r in cached["rows"] if r.get("is_value")])
+                all_targets.extend([LiveTarget(**t) for t in cached.get("targets", [])])
+                events_data.extend(cached.get("events_data", []))
 
         import dataclasses
         all_targets   = score_targets(all_targets)

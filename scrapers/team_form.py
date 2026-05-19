@@ -333,31 +333,40 @@ def fetch_team_form(
     Returns (home_form, away_form, source_name).
     home/away_form keys: avg_goals_scored, avg_goals_conceded, games_analyzed, last_5_results
     source_name: "football_data" | "api_football" | None (league not supported)
+
+    Provider logic (dual mode):
+      1. Always try football-data.org first for its 9 covered competitions.
+      2. For all other leagues, fall back to api-football — but only if the
+         daily budget has at least 60 requests remaining (live scanner priority).
     """
     for k, v in env.items():
         os.environ[k] = v
 
-    if FORM_PROVIDER == "football_data":
-        comp_code = _FD_SPORT_TO_COMP.get(sport_key)
-        if not comp_code:
-            return None, None, None
-
+    # ── football-data.org (9 competitions, no budget conflict) ────────────────
+    comp_code = _FD_SPORT_TO_COMP.get(sport_key)
+    if comp_code:
         home_id = _resolve_fd_id(home_team, comp_code)
         away_id = _resolve_fd_id(away_team, comp_code)
         home_form = _fetch_fd_form(home_id, home_team, db_path) if home_id else None
         away_form = _fetch_fd_form(away_id, away_team, db_path) if away_id else None
-
         if home_form is not None or away_form is not None:
             return home_form, away_form, "football_data"
-        return None, None, None
 
-    elif FORM_PROVIDER == "api_football":
+    # ── api-football fallback (all other leagues) ─────────────────────────────
+    if FORM_PROVIDER in ("api_football", "football_data"):
         from utils.league_map import LEAGUE_MAP
+        from scrapers.apifootball import get_remaining as _apif_remaining
         league_id = next(
             (lid for lid, info in LEAGUE_MAP.items() if info.get("odds_key") == sport_key),
             None,
         )
         if not league_id:
+            return None, None, None
+
+        # Guard: leave at least 60 requests for the live scanner
+        rem = _apif_remaining()
+        if rem is not None and rem < 60:
+            print(f"[TeamForm] api-football budget low ({rem} remaining) — skipping form fetch")
             return None, None, None
 
         home_id   = _resolve_apif_id(home_team, league_id)

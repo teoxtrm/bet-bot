@@ -229,10 +229,11 @@ def _resolve_apif_id(team_name: str, league_id: int) -> int | None:
         return None
 
     try:
+        # api-football does not allow search + league together — search by name only
         r = requests.get(
             "https://v3.football.api-sports.io/teams",
             headers={"x-apisports-key": api_key},
-            params={"search": team_name[:30], "league": league_id},
+            params={"search": team_name[:30]},
             timeout=8,
         )
         if r.status_code != 200:

@@ -671,6 +671,7 @@ def _run_pregame_scan(username: str, league_key: str):
                 except Exception as _fe:
                     _home_form = _away_form = None
                     health.failed("team_form", error=str(_fe)[:80])
+                    print(f"[TeamForm] error for {ev.get('home_team')} vs {ev.get('away_team')}: {_fe}")
 
                 _evdata.append({"event": ev, "p_1x2": p_1x2, "p_ou": p_ou,
                                  "p_ht": p_ht, "p_ht15": p_ht15,

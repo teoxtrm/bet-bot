@@ -694,10 +694,11 @@ async def track_bets(username=Depends(get_current_user_api)):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class LiveStartRequest(BaseModel):
-    mode:      str = "auto"
-    sport_key: str = ""
-    interval:  int = 120
-    max_tier:  int = 2
+    mode:           str       = "auto"
+    sport_key:      str       = ""
+    interval:       int       = 120
+    max_tier:       int       = 2
+    watchlist_keys: list[str] = []   # sport_keys from pre-game watchlist
 
 
 @app.post("/api/live/start")
@@ -707,7 +708,8 @@ async def start_live(req: LiveStartRequest, background_tasks: BackgroundTasks,
     if ls["running"]:
         raise HTTPException(status_code=409, detail="Already running")
     ls.update(running=True, mode=req.mode, sport_key=req.sport_key,
-               interval=max(30, req.interval), max_tier=req.max_tier, iteration=0)
+               interval=max(30, req.interval), max_tier=req.max_tier,
+               watchlist_keys=req.watchlist_keys, iteration=0)
     env = user_env(username)
     background_tasks.add_task(_live_loop, username, env)
     return {"status": "started"}
@@ -732,12 +734,16 @@ def _live_loop(username: str, env: dict):
     while ls["running"]:
         try:
             ls["iteration"] += 1
-            if ls["mode"] == "auto":
+            if ls["mode"] == "watchlist":
+                from scrapers.live_scanner import scan_all_live
+                wl_keys = ls.get("watchlist_keys") or []
+                results = scan_all_live(max_tier=3, sport_keys_filter=set(wl_keys))
+            elif ls["mode"] == "auto":
                 from scrapers.live_scanner import scan_all_live
                 results = scan_all_live(max_tier=ls["max_tier"])
             else:
                 from scrapers.live_scanner import scan_once
-                results = scan_once(ls["sport_key"] or "soccer_epl")
+                results = scan_once(ls["sport_key"] or "soccer_efl_champ")
 
             with _state_lock:
                 _live_results[username] = results

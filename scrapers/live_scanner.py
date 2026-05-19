@@ -214,17 +214,19 @@ def _fuzzy_event_match(parsed_event: dict, home: str, away: str) -> bool:
     return home_match and away_match
 
 
-def scan_all_live(max_tier: int = 2, max_matches: int = 6) -> list:
+def scan_all_live(max_tier: int = 2, max_matches: int = 6,
+                  sport_keys_filter: set[str] | None = None) -> list:
     """
-    Scans ALL quality leagues for live matches — no league pre-selection needed.
+    Scans quality leagues for live matches.
+
+    sport_keys_filter: if provided (Watchlist Only mode), only fetch odds for
+    those specific Odds API sport_keys — ignores max_tier league filter.
 
     Step 1 — Discover  (1 API-Football request):
         /fixtures?live=all → filter by league quality + minute + score
-    Step 2 — Team form  (2 API-Football requests per match):
-        /fixtures?team={id}&last=6 for home and away
-    Step 3 — Odds       (1 Odds API credit per unique league found):
+    Step 2 — Odds       (1 Odds API credit per unique league found):
         fetch odds once per league, fuzzy-match to discovered fixtures
-    Step 4 — Analyse    (0 extra requests):
+    Step 3 — Analyse    (0 extra requests):
         same Over 2.5 + HT 0.5 + HT 1.5 value logic as scan_once()
 
     Typical cost for 5 matches in 3 leagues: ~11 API-Football + 3 Odds API credits.
@@ -244,6 +246,9 @@ def scan_all_live(max_tier: int = 2, max_matches: int = 6) -> list:
     # ── Step 3: Fetch Odds API once per unique league ─────────────────────────
     by_odds_key: dict[str, list] = defaultdict(list)
     for c in candidates:
+        # In watchlist-only mode skip leagues not in the filter
+        if sport_keys_filter and c["odds_key"] not in sport_keys_filter:
+            continue
         by_odds_key[c["odds_key"]].append(c)
 
     odds_by_fixture: dict[int, dict] = {}  # fixture_id → parsed Odds API event

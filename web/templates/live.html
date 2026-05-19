@@ -26,11 +26,14 @@
   <!-- Controls -->
   <div class="bg-card rounded-xl p-3 flex flex-wrap items-center gap-3">
     <select id="live-mode" class="bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
+      <option value="watchlist">Watchlist Only</option>
       <option value="auto">Auto (All Leagues)</option>
       <option value="manual">Manual (select league)</option>
     </select>
+    <!-- Watchlist summary badge -->
+    <span id="wl-mode-badge" class="text-xs text-yellow border border-yellow/40 bg-yellow/10 px-3 py-1.5 rounded-lg"></span>
     <select id="live-league" class="hidden bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none"></select>
-    <select id="live-tier" class="bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
+    <select id="live-tier" class="hidden bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
       <option value="1">Max Tier 1</option>
       <option value="2" selected>Max Tier 2</option>
       <option value="3">Max Tier 3</option>
@@ -105,6 +108,7 @@ fetch('/api/tipster/picks').then(r => r.json()).then(d => {
   renderWatchlistStrip(_watchlist);
   document.getElementById('watchlist-strip-wrap').classList.remove('hidden');
   document.getElementById('wl-count').textContent = _watchlist.length;
+  updateModeUI(); // refresh badge with actual count
 }).catch(() => {});
 
 function ratingInfo(score) {
@@ -165,20 +169,41 @@ fetch('/api/leagues').then(r => r.json()).then(d => {
   });
 }).catch(() => {});
 
-document.getElementById('live-mode').addEventListener('change', function () {
-  document.getElementById('live-league').classList.toggle('hidden', this.value !== 'manual');
-  document.getElementById('live-tier').classList.toggle('hidden', this.value === 'manual');
-});
+function updateModeUI() {
+  const mode = document.getElementById('live-mode').value;
+  document.getElementById('live-league').classList.toggle('hidden', mode !== 'manual');
+  document.getElementById('live-tier').classList.toggle('hidden', mode !== 'auto');
+  const badge = document.getElementById('wl-mode-badge');
+  if (mode === 'watchlist') {
+    const n = _watchlist.length;
+    badge.textContent = n
+      ? `👁 ${n} watchlist game${n > 1 ? 's' : ''} — ${[...new Set(_watchlist.map(g => g.sport_key))].length} league${[...new Set(_watchlist.map(g => g.sport_key))].length > 1 ? 's' : ''}`
+      : '⚠ No watchlist — run pre-game scan first';
+    badge.classList.remove('hidden');
+  } else {
+    badge.classList.add('hidden');
+  }
+}
+document.getElementById('live-mode').addEventListener('change', updateModeUI);
+// init on load
+updateModeUI();
 
 // ── Controls ──────────────────────────────────────────────────────────────────
 document.getElementById('btn-live-start').addEventListener('click', () => {
   const mode     = document.getElementById('live-mode').value;
-  const tier     = parseInt(document.getElementById('live-tier').value);
+  const tier     = parseInt(document.getElementById('live-tier').value) || 2;
   const interval = parseInt(document.getElementById('live-interval').value) || 120;
   const sk       = mode === 'manual' ? document.getElementById('live-league').value : '';
+  const wlKeys   = mode === 'watchlist' ? [...new Set(_watchlist.map(g => g.sport_key).filter(Boolean))] : [];
+
+  if (mode === 'watchlist' && wlKeys.length === 0) {
+    alert('No watchlist games found. Run the pre-game scan first.');
+    return;
+  }
+
   fetch('/api/live/start', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({mode, sport_key: sk, interval, max_tier: tier}),
+    body: JSON.stringify({mode, sport_key: sk, interval, max_tier: tier, watchlist_keys: wlKeys}),
   }).then(r => r.json()).then(() => {
     document.getElementById('btn-live-start').disabled = true;
     document.getElementById('btn-live-stop').disabled  = false;

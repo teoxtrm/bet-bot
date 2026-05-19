@@ -19,6 +19,7 @@ import json
 import os
 import pathlib
 import re
+import tempfile
 from datetime import date
 
 from config import FORM_PROVIDER
@@ -82,7 +83,11 @@ def _load_fd_cache() -> dict:
 
 def _save_fd_cache(data: dict):
     _CACHE_DIR.mkdir(exist_ok=True)
-    _FD_TEAMS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    with tempfile.NamedTemporaryFile("w", dir=_CACHE_DIR, delete=False,
+                                     suffix=".tmp", encoding="utf-8") as tf:
+        tf.write(text)
+    os.replace(tf.name, _FD_TEAMS_FILE)
 
 
 def _resolve_fd_id(team_name: str, comp_code: str) -> int | None:
@@ -206,7 +211,11 @@ def _load_apif_cache() -> dict:
 
 def _save_apif_cache(data: dict):
     _CACHE_DIR.mkdir(exist_ok=True)
-    _APIF_TEAMS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    with tempfile.NamedTemporaryFile("w", dir=_CACHE_DIR, delete=False,
+                                     suffix=".tmp", encoding="utf-8") as tf:
+        tf.write(text)
+    os.replace(tf.name, _APIF_TEAMS_FILE)
 
 
 def _resolve_apif_id(team_name: str, league_id: int) -> int | None:

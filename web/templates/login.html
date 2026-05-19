@@ -27,6 +27,7 @@
 
     <form method="post" action="/login" class="space-y-4">
       <input type="hidden" name="next" value="{{ next }}"/>
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"/>
       <div>
         <label class="text-gray-400 text-sm block mb-1">Username</label>
         <input name="username" type="text" required autocomplete="username"

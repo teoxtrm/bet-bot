@@ -14,6 +14,7 @@ Free tier: 500 requests/month
 import os
 import json
 import pathlib
+import tempfile
 import requests
 from dotenv import load_dotenv
 
@@ -44,7 +45,11 @@ def _persist_credits():
         if _CREDITS_FILE.exists():
             existing = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
         existing["odds_api"] = {**_credits}
-        _CREDITS_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        tmp = tempfile.NamedTemporaryFile("w", dir=_CREDITS_FILE.parent,
+                                          delete=False, suffix=".tmp", encoding="utf-8")
+        tmp.write(json.dumps(existing, indent=2))
+        tmp.close()
+        os.replace(tmp.name, _CREDITS_FILE)
     except Exception:
         pass
 
@@ -126,7 +131,11 @@ def _persist_key_cache():
             existing = json.loads(_CREDITS_FILE.read_text(encoding="utf-8"))
         existing["ht_unsupported"]    = sorted(_ht_unsupported)
         existing["invalid_sport_keys"] = sorted(_invalid_sport_keys)
-        _CREDITS_FILE.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+        tmp = tempfile.NamedTemporaryFile("w", dir=_CREDITS_FILE.parent,
+                                          delete=False, suffix=".tmp", encoding="utf-8")
+        tmp.write(json.dumps(existing, indent=2))
+        tmp.close()
+        os.replace(tmp.name, _CREDITS_FILE)
     except Exception:
         pass
 

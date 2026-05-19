@@ -78,11 +78,12 @@
             <th class="px-3 py-3 text-center">Bookmaker</th>
             <th class="px-3 py-3 text-center">Odds</th>
             <th class="px-3 py-3 text-center">Edge</th>
+            <th class="px-3 py-3 text-center">Stake</th>
             <th class="px-3 py-3 text-center">Status</th>
           </tr>
         </thead>
         <tbody id="live-tbody">
-          <tr><td colspan="13" class="text-center text-dim py-12">Press Start to begin monitoring</td></tr>
+          <tr><td colspan="14" class="text-center text-dim py-12">Press Start to begin monitoring</td></tr>
         </tbody>
       </table>
     </div>
@@ -223,7 +224,7 @@ document.getElementById('btn-live-stop').addEventListener('click', () => {
 
 document.getElementById('btn-live-clear').addEventListener('click', () => {
   document.getElementById('live-tbody').innerHTML =
-    '<tr><td colspan="13" class="text-center text-dim py-12">—</td></tr>';
+    '<tr><td colspan="14" class="text-center text-dim py-12">—</td></tr>';
   document.getElementById('live-log').innerHTML = '';
 });
 
@@ -279,10 +280,11 @@ function renderLive(results) {
       const ht15steam = steamMkts.has('HT Over 1.5');
       rows.push(buildRow(m, '↳', 'O1.5 HT', ht15p, '', '', '', ht15b, !!(m.ht_15_bets || []).length, true, watched, watchTip, ht15steam));
     }
+
   });
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="text-center text-dim py-12">No live matches found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="text-center text-dim py-12">No live matches found</td></tr>';
     return;
   }
   rows.sort((a, b) => (b.priority - a.priority));
@@ -290,11 +292,12 @@ function renderLive(results) {
 }
 
 function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValue, isHT, watched, watchTip, hasSteam) {
-  const score = `${m.home_score}–${m.away_score}`;
-  const min   = m.minute != null ? m.minute + "'" : '—';
-  const bm    = bestBet ? bestBet.bookmaker       : '—';
-  const odds  = bestBet ? bestBet.bookmaker_odds  : '—';
-  const edge  = bestBet ? (bestBet.value_edge * 100).toFixed(1) + '%' : '—';
+  const score   = `${m.home_score}–${m.away_score}`;
+  const min     = m.minute != null ? m.minute + "'" : '—';
+  const bm      = bestBet ? bestBet.bookmaker       : '—';
+  const odds    = bestBet ? bestBet.bookmaker_odds  : '—';
+  const edge    = bestBet ? (bestBet.value_edge * 100).toFixed(1) + '%' : '—';
+  const stakeV  = bestBet && bestBet.stake != null ? `€${bestBet.stake.toFixed(2)}` : '—';
   const edgeCls = bestBet && bestBet.value_edge > 0 ? 'text-green' : 'text-red';
 
   let status = '', statusCls = '';
@@ -334,6 +337,7 @@ function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValu
     <td class="px-2 py-2 text-center text-dim text-xs">${bm}</td>
     <td class="px-2 py-2 text-center font-mono">${odds}</td>
     <td class="px-2 py-2 text-center font-mono ${edgeCls}">${edge}</td>
+    <td class="px-2 py-2 text-center font-mono font-semibold">${stakeV}</td>
     <td class="px-2 py-2 text-center ${statusCls}">${status}</td>
   </tr>`;
   return { html, priority };

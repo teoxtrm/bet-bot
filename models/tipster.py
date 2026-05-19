@@ -56,6 +56,7 @@ class TipsterPick:
     best_bookmaker: str
     signals:        list[str] = field(default_factory=list)
     is_combo:       bool = False
+    stake:          float = 0.0
 
     @property
     def tier(self) -> str:
@@ -450,8 +451,16 @@ def score_event(
     return picks
 
 
-def generate_picks(events_data: list[dict]) -> list[TipsterPick]:
+def generate_picks(
+    events_data:  list[dict],
+    stake_method: str   = "kelly",
+    bankroll:     float = 1000.0,
+    base_stake:   float = 10.0,
+    fixed_pct:    float = 2.0,
+) -> list[TipsterPick]:
     """Process all events, return top MAX_PICKS tips. Max 1 single + 1 combo per match."""
+    from models.value_calculator import calculate_stake
+
     all_picks = []
     for item in events_data:
         picks = score_event(
@@ -481,4 +490,14 @@ def generate_picks(events_data: list[dict]) -> list[TipsterPick]:
                 deduped.append(p)
 
     deduped.sort(key=lambda p: -p.confidence)
-    return deduped[:MAX_PICKS]
+    result = deduped[:MAX_PICKS]
+
+    for p in result:
+        p.stake = calculate_stake(
+            p.pinnacle_prob, p.best_odds,
+            method=stake_method, bankroll=bankroll,
+            base_stake=base_stake, fixed_pct=fixed_pct,
+            confidence=p.confidence,
+        )
+
+    return result

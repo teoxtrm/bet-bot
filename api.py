@@ -279,6 +279,9 @@ async def save_settings(
     api_football_key:  str = Form(default=""),
     football_data_key: str = Form(default=""),
     bankroll:          str = Form(default="1000"),
+    stake_method:      str = Form(default="kelly"),
+    base_stake:        str = Form(default="10"),
+    fixed_pct:         str = Form(default="2"),
 ):
     env_path = user_dir(username) / ".env"
     lines = [
@@ -286,9 +289,12 @@ async def save_settings(
         f"API_FOOTBALL_KEY={api_football_key.strip()}",
         f"FOOTBALL_DATA_KEY={football_data_key.strip()}",
         f"BANKROLL={bankroll.strip()}",
+        f"STAKE_METHOD={stake_method.strip()}",
+        f"BASE_STAKE={base_stake.strip()}",
+        f"FIXED_PCT={fixed_pct.strip()}",
     ]
     env_path.write_text("\n".join(lines), encoding="utf-8")
-    return RedirectResponse("/pregame", status_code=303)
+    return RedirectResponse("/settings", status_code=303)
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────────
@@ -448,11 +454,14 @@ def _run_pregame_scan(username: str, league_key: str):
                                         get_pinnacle_no_vig_probs,
                                         get_pinnacle_no_vig_totals)
         from models.live_targets import LiveTarget, classify, score_targets
-        from models.value_calculator import compare_bookmakers, kelly_criterion
+        from models.value_calculator import compare_bookmakers, kelly_criterion, calculate_stake
         from utils.league_map import ODDS_KEY_TO_LEAGUE as OKL
 
-        bankroll  = float(env.get("BANKROLL", "1000"))
-        markets   = ["h2h", "totals", "totals_h1"]
+        bankroll      = float(env.get("BANKROLL", "1000"))
+        stake_method  = env.get("STAKE_METHOD", "kelly")
+        base_stake    = float(env.get("BASE_STAKE", "10"))
+        fixed_pct     = float(env.get("FIXED_PCT", "2"))
+        markets       = ["h2h", "totals", "totals_h1"]
         today_str = date.today().isoformat()
         now_utc   = datetime.utcnow()
         from datetime import timedelta
@@ -552,14 +561,20 @@ def _run_pregame_scan(username: str, league_key: str):
                             bm_odds[bm] = o
                     if not bm_odds:
                         continue
-                    comps = compare_bookmakers(prob, bm_odds)
-                    best  = comps[0]
-                    kelly = kelly_criterion(prob, best["bookmaker_odds"], bankroll)
+                    comps      = compare_bookmakers(prob, bm_odds)
+                    best       = comps[0]
+                    kelly      = kelly_criterion(prob, best["bookmaker_odds"], bankroll)
+                    stake_amt  = calculate_stake(
+                        prob, best["bookmaker_odds"],
+                        method=stake_method, bankroll=bankroll,
+                        base_stake=base_stake, fixed_pct=fixed_pct,
+                    )
                     row   = {
                         "league": lkey, "match": f"{ev['home_team']} vs {ev['away_team']}",
                         "date": ev["commence"][:10], "market": mkt, "prob": prob,
                         "bookmaker": best["bookmaker"], "odds": best["bookmaker_odds"],
                         "edge": best["value_edge"], "kelly": kelly["suggested_bet"],
+                        "stake": stake_amt,
                         "is_value": best["is_value_bet"],
                         "home_team": ev["home_team"], "away_team": ev["away_team"],
                         "event_id": ev.get("id", ""),
@@ -636,7 +651,10 @@ def _run_pregame_scan(username: str, league_key: str):
         if events_data:
             try:
                 from models.tipster import generate_picks
-                tipster_picks = generate_picks(events_data)
+                tipster_picks = generate_picks(
+                    events_data, stake_method=stake_method,
+                    bankroll=bankroll, base_stake=base_stake, fixed_pct=fixed_pct,
+                )
             except Exception as e:
                 print(f"[API] tipster error: {e}")
             try:
@@ -655,6 +673,7 @@ def _run_pregame_scan(username: str, league_key: str):
             "targets":       [dataclasses.asdict(t) for t in all_targets],
             "tipster_picks": [dataclasses.asdict(p) for p in tipster_picks],
             "watchlist":     [dataclasses.asdict(g) for g in watchlist],
+            "stake_method":  stake_method,
             "_value_rows":   value_rows,
         }
         _pregame_cache[username] = cache

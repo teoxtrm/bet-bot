@@ -68,6 +68,37 @@ def kelly_criterion(our_prob: float, bookmaker_odds: float, bankroll: float = 10
     }
 
 
+def calculate_stake(
+    our_prob:       float,
+    bookmaker_odds: float,
+    method:         str   = "kelly",
+    bankroll:       float = 1000.0,
+    base_stake:     float = 10.0,
+    fixed_pct:      float = 2.0,
+    confidence:     float = 0.0,
+) -> float:
+    """
+    Unified stake sizing.
+
+    method="kelly"     → 25% fractional Kelly on bankroll
+    method="fixed_pct" → fixed_pct% of bankroll every bet
+    method="tiered"    → base_stake × multiplier based on confidence tier
+                         LOCK (≥82%) = 1.5× | STRONG (≥72%) = 1× | TIP = 0.5×
+    confidence         → used by tiered (tipster confidence); falls back to our_prob
+    """
+    if method == "kelly":
+        return kelly_criterion(our_prob, bookmaker_odds, bankroll)["suggested_bet"]
+    if method == "fixed_pct":
+        return round(bankroll * fixed_pct / 100, 2)
+    # tiered
+    c = confidence if confidence > 0 else our_prob
+    if c >= 0.82:
+        return round(base_stake * 1.5, 2)
+    if c >= 0.72:
+        return round(base_stake, 2)
+    return round(base_stake * 0.5, 2)
+
+
 def compare_bookmakers(our_prob: float, odds_by_bookmaker: dict) -> list:
     """
     Συγκρίνει value σε πολλές στοιχηματικές ταυτόχρονα.

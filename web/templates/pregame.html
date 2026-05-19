@@ -94,7 +94,7 @@
               <th class="px-3 py-2 text-center">Bookmaker</th>
               <th class="px-3 py-2 text-center">Odds</th>
               <th class="px-3 py-2 text-center">Edge</th>
-              <th class="px-3 py-2 text-center">Kelly</th>
+              <th id="stake-col-header" class="px-3 py-2 text-center">Stake</th>
             </tr>
           </thead>
           <tbody id="pregame-tbody">
@@ -160,9 +160,16 @@ fetch('/api/leagues').then(r => r.json()).then(d => {
   sel.value = 'STARTER PACK';
 }).catch(() => {});
 
+// ── Stake method label ────────────────────────────────────────────────────────
+let _stakeMethod = 'kelly';
+function stakeColLabel() {
+  return { kelly: 'Kelly', fixed_pct: 'Stake %', tiered: 'Stake €' }[_stakeMethod] || 'Stake';
+}
+
 // ── Restore in-memory cache ───────────────────────────────────────────────────
 fetch('/api/scan/results').then(r => r.json()).then(d => {
   if (d.rows && d.rows.length) {
+    _stakeMethod = d.stake_method || 'kelly';
     renderTips(d.tipster_picks || []);
     renderWatchlist(d.watchlist || []);
     renderMarkets(d.rows, d.value_count || 0);
@@ -219,6 +226,7 @@ connectWS(msg => {
     const txt = msg.data.text || '';
     document.getElementById('scan-status-text').textContent = txt;
     if (msg.results) {
+      _stakeMethod = msg.results.stake_method || _stakeMethod;
       renderTips(msg.results.tipster_picks || []);
       renderWatchlist(msg.results.watchlist || []);
       renderMarkets(msg.results.rows || [], msg.results.value_count || 0);
@@ -285,6 +293,7 @@ function renderTips(picks) {
     <div class="text-right text-xs text-dim leading-relaxed">
       <div>Pin ${(p.pinnacle_prob * 100).toFixed(1)}%</div>
       <div>xG ${p.inferred_xg.toFixed(2)}</div>
+      ${p.stake > 0 ? `<div class="text-white font-semibold mt-0.5">Stake €${p.stake.toFixed(2)}</div>` : ''}
     </div>
   </div>
   <!-- Signal tags -->
@@ -342,14 +351,16 @@ function renderWatchlist(games) {
 function renderMarkets(rows, valueCount) {
   const tbody = document.getElementById('pregame-tbody');
   document.getElementById('markets-count').textContent = rows.length;
+  document.getElementById('stake-col-header').textContent = stakeColLabel();
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-dim py-8">No markets</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((r, i) => {
-    const isV  = r.is_value;
-    const edge = (r.edge * 100).toFixed(1);
-    const bg   = i % 2 === 1 ? 'bg-white/[0.02]' : '';
+    const isV    = r.is_value;
+    const edge   = (r.edge * 100).toFixed(1);
+    const bg     = i % 2 === 1 ? 'bg-white/[0.02]' : '';
+    const stakeV = r.stake != null ? r.stake : r.kelly;
     return `<tr class="${bg} ${isV ? 'text-green' : ''} border-b border-muted/20 hover:bg-white/[0.04]">
       <td class="px-3 py-2">${r.match}</td>
       <td class="px-3 py-2 text-center text-dim">${r.date}</td>
@@ -358,7 +369,7 @@ function renderMarkets(rows, valueCount) {
       <td class="px-3 py-2 text-center">${r.bookmaker}</td>
       <td class="px-3 py-2 text-center font-mono">${r.odds}</td>
       <td class="px-3 py-2 text-center font-mono ${r.edge > 0 ? 'text-green' : 'text-red'}">${edge > 0 ? '+' : ''}${edge}%</td>
-      <td class="px-3 py-2 text-center">${isV ? '€' + r.kelly.toFixed(2) : '—'}</td>
+      <td class="px-3 py-2 text-center font-mono">${isV ? '€' + stakeV.toFixed(2) : '—'}</td>
     </tr>`;
   }).join('');
 }

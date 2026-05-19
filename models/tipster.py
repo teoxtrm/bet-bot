@@ -228,14 +228,18 @@ def _make_combo(
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def score_event(
-    event:  dict,
-    p_1x2:  dict | None,
-    p_ou:   dict | None,
-    league: str,
-    p_ht:   dict | None = None,
-    p_ht15: dict | None = None,
+    event:       dict,
+    p_1x2:       dict | None,
+    p_ou:        dict | None,
+    league:      str,
+    p_ht:        dict | None = None,
+    p_ht15:      dict | None = None,
+    steam_moves: list        = None,
 ) -> list["TipsterPick"]:
     """Score one event. Returns qualifying TipsterPick objects (singles + combos)."""
+    from utils.steam import steam_markets as _steam_mkts
+    from config import STEAM_CONFIDENCE_BOOST
+    _steam_set = _steam_mkts(steam_moves)
     picks = []
     home  = event.get("home_team", "")
     away  = event.get("away_team", "")
@@ -322,6 +326,13 @@ def score_event(
             draw_pool["Draw"] = {"conf": conf, "odds": best_odds, "bm": best_bm}
         elif market in ("HT Over 0.5", "HT Over 1.5"):
             ht_pool[market] = {"conf": conf, "odds": best_odds, "bm": best_bm}
+
+        # Steam boost: sharp money on this market → higher confidence
+        if market in _steam_set:
+            steam_sig = next((s for s in (steam_moves or []) if s["market"] == market), None)
+            if steam_sig:
+                conf = min(0.95, conf + STEAM_CONFIDENCE_BOOST)
+                signals.append(steam_sig["label"])
 
         if conf < MIN_CONF:
             continue
@@ -444,12 +455,13 @@ def generate_picks(events_data: list[dict]) -> list[TipsterPick]:
     all_picks = []
     for item in events_data:
         picks = score_event(
-            event  = item["event"],
-            p_1x2  = item.get("p_1x2"),
-            p_ou   = item.get("p_ou"),
-            league = item.get("league", ""),
-            p_ht   = item.get("p_ht"),
-            p_ht15 = item.get("p_ht15"),
+            event       = item["event"],
+            p_1x2       = item.get("p_1x2"),
+            p_ou        = item.get("p_ou"),
+            league      = item.get("league", ""),
+            p_ht        = item.get("p_ht"),
+            p_ht15      = item.get("p_ht15"),
+            steam_moves = item.get("steam_moves", []),
         )
         all_picks.extend(picks)
 

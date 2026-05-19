@@ -54,6 +54,7 @@ def classify(
     best_ht_odds:   float | None = None,
     p_ht_ou:        dict | None = None,
     has_value_bet:  bool = False,
+    steam_moves:    list = None,
 ) -> list[LiveTarget]:
     """
     Ελέγχει αν ένας αγώνας είναι Live Target και επιστρέφει λίστα targets.
@@ -65,7 +66,12 @@ def classify(
         p_ou:           Pinnacle no-vig Over/Under probs
         best_*_odds:    καλύτερη τρέχουσα απόδοση ανά αγορά
         has_value_bet:  αν ήδη βρέθηκε value bet → target γίνεται bonus hint
+        steam_moves:    detected steam signals from detect_steam()
     """
+    from utils.steam import steam_markets as _steam_mkts, format_steam_short
+    _steam_set    = _steam_mkts(steam_moves)
+    _steam_label  = format_steam_short(steam_moves) if steam_moves else ""
+
     targets = []
     home  = event.get("home_team", "")
     away  = event.get("away_team", "")
@@ -80,6 +86,11 @@ def classify(
     if p_ou and p_ou.get("over_prob", 0) >= OVER_HIGH_PROB and not has_value_bet:
         prob = p_ou["over_prob"]
         prio = 1 if prob >= OVER_VERY_HIGH_PROB else 2
+        if "Over 2.5" in _steam_set:
+            prio = 1  # steam on same market → elevate to high
+        _reason = f"Pinnacle: {prob:.1%} > {OVER_HIGH_PROB:.0%} | No pre-game value yet"
+        if _steam_label:
+            _reason += f" | {_steam_label}"
         targets.append(LiveTarget(
             match        = label,
             home_team    = home,
@@ -88,7 +99,7 @@ def classify(
             league       = sport,
             event_id     = eid,
             target_type  = "OVER 2.5",
-            reason       = f"Pinnacle: {prob:.1%} > {OVER_HIGH_PROB:.0%} | No pre-game value yet",
+            reason       = _reason,
             key_prob     = prob,
             current_odds = best_over_odds or 0.0,
             action       = (
@@ -97,7 +108,7 @@ def classify(
                 "οι live odds ανεβαίνουν → ψάξε value window."
             ),
             priority     = prio,
-            tags         = ["goals", "over"],
+            tags         = ["goals", "over"] + (["steam"] if "Over 2.5" in _steam_set else []),
         ))
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -175,6 +186,15 @@ def classify(
     if p_ht_ou and p_ht_ou.get("over_prob", 0) >= HT_GOAL_HIGH_PROB and not has_value_bet:
         prob = p_ht_ou["over_prob"]
         prio = 1 if prob >= HT_GOAL_LOCK_PROB else 2
+        ht_steam = "HT Over 0.5" in _steam_set or "HT Over 1.5" in _steam_set
+        if ht_steam:
+            prio = 1
+        _ht_reason = (
+            f"Pinnacle HT O0.5: {prob:.1%} > {HT_GOAL_HIGH_PROB:.0%} | "
+            f"Ανοιχτό παράθυρο 5'-25'"
+        )
+        if _steam_label:
+            _ht_reason += f" | {_steam_label}"
         targets.append(LiveTarget(
             match        = label,
             home_team    = home,
@@ -183,10 +203,7 @@ def classify(
             league       = sport,
             event_id     = eid,
             target_type  = "HT GOAL CANDIDATE",
-            reason       = (
-                f"Pinnacle HT O0.5: {prob:.1%} > {HT_GOAL_HIGH_PROB:.0%} | "
-                f"Ανοιχτό παράθυρο 5'-25'"
-            ),
+            reason       = _ht_reason,
             key_prob     = prob,
             current_odds = best_ht_odds or 0.0,
             action       = (
@@ -194,7 +211,7 @@ def classify(
                 "Live O0.5 HT ανεβαίνει γρήγορα → value window πριν το 25'."
             ),
             priority     = prio,
-            tags         = ["ht", "goals", "first-half"],
+            tags         = ["ht", "goals", "first-half"] + (["steam"] if ht_steam else []),
         ))
 
     return targets

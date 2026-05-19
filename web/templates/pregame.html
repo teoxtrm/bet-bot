@@ -305,15 +305,20 @@ function renderWatchlist(games) {
     const ri  = ratingInfo(g.live_score);
     const ko  = koTime(g.kickoff);
     const bar = Math.round(g.live_score * 100);
+    const hasSteam = g.live_action && g.live_action.includes('🔥');
     const htCls = g.ht_tip && g.ht_tip.includes('HT') ? 'text-yellow font-semibold' :
                   g.ht_tip && g.ht_tip.includes('Over') ? 'text-blue-300 font-semibold' : 'text-dim';
-    const rowBg = i % 2 === 1 ? 'bg-white/[0.02]' : '';
+    const rowBg = hasSteam ? 'bg-orange-900/10 border-l-2 border-orange-400' :
+                  i % 2 === 1 ? 'bg-white/[0.02]' : '';
+    const steamBadge = hasSteam
+      ? `<span class="ml-1.5 text-xs font-bold text-orange-400 bg-orange-900/30 px-1.5 py-0.5 rounded">🔥 STEAM</span>`
+      : '';
     return `<tr class="${rowBg} border-b border-muted/20 hover:bg-white/[0.04] transition-colors">
       <td class="px-3 py-3 text-center">
         <span class="text-xs ${ri.cls}">${ri.label}</span>
       </td>
       <td class="px-3 py-3">
-        <div class="font-medium text-sm">${g.home_team} <span class="text-dim text-xs font-normal">vs</span> ${g.away_team}</div>
+        <div class="font-medium text-sm">${g.home_team} <span class="text-dim text-xs font-normal">vs</span> ${g.away_team}${steamBadge}</div>
         <div class="text-xs text-dim mt-0.5">${g.league}</div>
       </td>
       <td class="px-3 py-3 text-center font-mono text-sm">${ko}</td>

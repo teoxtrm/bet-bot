@@ -29,8 +29,8 @@ sys.path.insert(0, str(BASE_DIR))
 load_dotenv(BASE_DIR / ".env")
 
 from utils.database import (auto_settle_from_api, get_all_bets, get_pending_bets,
-                              get_stats, init_db, save_match_snapshot,
-                              settle_bet, track_value_bet)
+                              get_event_prev_probs, get_stats, get_today_snapshot_probs,
+                              init_db, save_match_snapshot, settle_bet, track_value_bet)
 from utils.scan_cache import (clear_league_cache, load_league_scan, load_scan,
                                save_league_scan, save_scan)
 
@@ -488,9 +488,20 @@ def _run_pregame_scan(username: str, league_key: str):
                 _league_prof = OKL.get(sport_key, {})
                 _tier  = _league_prof.get("tier", 2)
                 _score = _league_prof.get("strategy_score", 6)
+                # Steam detection: compare current Pinnacle probs vs last stored snapshot
+                from utils.steam import detect_steam
+                _prev_probs  = get_event_prev_probs(ev.get("id", ""), db_path=db_path)
+                _steam_moves = detect_steam(_prev_probs, {
+                    "over25": p_ou.get("over_prob")   if p_ou   else None,
+                    "ht05":   p_ht.get("over_prob")   if p_ht   else None,
+                    "ht15":   p_ht15.get("over_prob") if p_ht15 else None,
+                    "home":   p_1x2.get("home")       if p_1x2  else None,
+                    "away":   p_1x2.get("away")       if p_1x2  else None,
+                })
                 _evdata.append({"event": ev, "p_1x2": p_1x2, "p_ou": p_ou,
                                  "p_ht": p_ht, "p_ht15": p_ht15,
-                                 "league": lkey, "tier": _tier, "strategy_score": _score})
+                                 "league": lkey, "tier": _tier, "strategy_score": _score,
+                                 "steam_moves": _steam_moves})
                 save_match_snapshot(
                     event_id        = ev.get("id", ""),
                     match_date      = ev.get("commence", "")[:10],
@@ -572,7 +583,8 @@ def _run_pregame_scan(username: str, league_key: str):
                 _tgts.extend(classify(ev, p_1x2, p_ou,
                     best_over_odds=best_over, best_home_odds=best_home,
                     best_away_odds=best_away, best_btts_odds=best_btts,
-                    best_ht_odds=best_ht, p_ht_ou=p_ht, has_value_bet=has_value_ev))
+                    best_ht_odds=best_ht, p_ht_ou=p_ht, has_value_bet=has_value_ev,
+                    steam_moves=_steam_moves))
             return _rows, _vrows, _tgts, _evdata
 
         if starter_pack:
@@ -766,20 +778,26 @@ async def live_results(username=Depends(get_current_user_api)):
 def _live_loop(username: str, env: dict):
     for k, v in env.items():
         os.environ[k] = v
-    ls = _user_live_status(username)
+    ls       = _user_live_status(username)
+    db_path  = str(user_db(username))
+    # Load today's pre-game Pinnacle baseline once at loop start (steam detection)
+    pregame_baseline = get_today_snapshot_probs(db_path)
     while ls["running"]:
         try:
             ls["iteration"] += 1
             if ls["mode"] == "watchlist":
                 from scrapers.live_scanner import scan_all_live
                 wl_keys = ls.get("watchlist_keys") or []
-                results = scan_all_live(max_tier=3, sport_keys_filter=set(wl_keys))
+                results = scan_all_live(max_tier=3, sport_keys_filter=set(wl_keys),
+                                        pregame_baseline=pregame_baseline)
             elif ls["mode"] == "auto":
                 from scrapers.live_scanner import scan_all_live
-                results = scan_all_live(max_tier=ls["max_tier"])
+                results = scan_all_live(max_tier=ls["max_tier"],
+                                        pregame_baseline=pregame_baseline)
             else:
                 from scrapers.live_scanner import scan_once
-                results = scan_once(ls["sport_key"] or "soccer_efl_champ")
+                results = scan_once(ls["sport_key"] or "soccer_efl_champ",
+                                    pregame_baseline=pregame_baseline)
 
             with _state_lock:
                 _live_results[username] = results

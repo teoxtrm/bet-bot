@@ -14,6 +14,7 @@
   <p class="text-dim text-sm">Τα API keys αποθηκεύονται μόνο στον server, ξεχωριστά ανά χρήστη.</p>
 
   <form method="post" action="/settings" class="bg-card rounded-xl p-5 space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}"/>
 
     <div>
       <label class="text-sm text-dim block mb-1">The Odds API Key

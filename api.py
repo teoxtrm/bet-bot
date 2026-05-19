@@ -9,11 +9,14 @@ import hmac
 import json
 import os
 import pathlib
+import secrets
 import sys
 import threading
 import time
 from datetime import date, datetime
 from typing import Optional
+
+import bcrypt
 
 from dotenv import load_dotenv, dotenv_values
 from fastapi import (BackgroundTasks, Cookie, Depends, FastAPI,
@@ -60,7 +63,16 @@ def _save_users(users: dict):
 
 
 def _hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Hash with bcrypt (new accounts and password changes)."""
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def _check_password(password: str, stored_hash: str) -> bool:
+    """Verify password against stored hash. Handles both bcrypt and legacy SHA256."""
+    if stored_hash.startswith("$2b$") or stored_hash.startswith("$2a$"):
+        return bcrypt.checkpw(password.encode(), stored_hash.encode())
+    # Legacy SHA256 — still valid, will be upgraded on next login
+    return hmac.compare_digest(stored_hash, hashlib.sha256(password.encode()).hexdigest())
 
 
 def _make_token(username: str, pw_hash: str) -> str:
@@ -82,6 +94,19 @@ def _verify_token(token: str) -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+# ── CSRF helpers ──────────────────────────────────────────────────────────────
+CSRF_COOKIE = "bb_csrf"
+
+
+def _make_csrf_token() -> str:
+    return secrets.token_hex(32)
+
+
+def _verify_csrf(request: Request, form_token: str) -> bool:
+    cookie_token = request.cookies.get(CSRF_COOKIE, "")
+    return bool(cookie_token) and hmac.compare_digest(cookie_token, form_token)
 
 
 def get_current_user(request: Request, bb_session: str = Cookie(default="")) -> str:
@@ -134,6 +159,7 @@ _scan_status:   dict = {}   # username → dict
 _live_status:   dict = {}   # username → dict
 _pregame_cache: dict = {}   # username → dict
 _ws_clients:    dict = {}   # username → list[WebSocket]
+_last_scan_start: dict = {} # username → timestamp (rate-limit guard)
 _ws_lock        = asyncio.Lock()
 _state_lock     = threading.Lock()
 _event_loop     = None      # set at startup, used by background threads
@@ -187,17 +213,17 @@ async def startup():
     global _event_loop
     _event_loop = asyncio.get_event_loop()
     (BASE_DIR / "data").mkdir(exist_ok=True)
-    # Create default admin if no users exist
     users = _load_users()
     if not users:
-        admin_pw = os.getenv("APP_PASSWORD", "betbot2024")
+        admin_pw = os.getenv("APP_PASSWORD") or secrets.token_urlsafe(16)
         users["admin"] = {
             "password_hash": _hash_password(admin_pw),
             "is_admin": True,
             "created_at": datetime.now().isoformat(),
         }
         _save_users(users)
-        print(f"[API] Created default admin user")
+        print(f"[API] Created default admin — password: {admin_pw}")
+        print(f"[API] Set APP_PASSWORD env var to silence this message.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -206,19 +232,31 @@ async def startup():
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, next: str = "/pregame", error: str = ""):
-    return templates.TemplateResponse(request=request, name="login.html",
-                                       context={"next": next, "error": error})
+    csrf = _make_csrf_token()
+    resp = templates.TemplateResponse(request=request, name="login.html",
+                                       context={"next": next, "error": error, "csrf": csrf})
+    resp.set_cookie(CSRF_COOKIE, csrf, httponly=False, samesite="strict", max_age=3600)
+    return resp
 
 
 @app.post("/login")
-async def login_submit(username: str = Form(...), password: str = Form(...),
-                        next: str = Form(default="/pregame")):
+async def login_submit(request: Request,
+                        username: str = Form(...), password: str = Form(...),
+                        next: str = Form(default="/pregame"),
+                        csrf_token: str = Form(default="")):
+    if not _verify_csrf(request, csrf_token):
+        return RedirectResponse(f"/login?error=1&next={next}", status_code=303)
     users = _load_users()
     user  = users.get(username)
-    if user and user["password_hash"] == _hash_password(password):
+    if user and _check_password(password, user["password_hash"]):
+        # Transparent upgrade: if stored as legacy SHA256, re-hash with bcrypt
+        if not user["password_hash"].startswith("$2"):
+            users[username]["password_hash"] = _hash_password(password)
+            _save_users(users)
+            user = users[username]
         token = _make_token(username, user["password_hash"])
-        resp  = RedirectResponse(next if next.startswith("/") else "/pregame",
-                                  status_code=303)
+        safe_next = next if (next.startswith("/") and not next.startswith("//")) else "/pregame"
+        resp  = RedirectResponse(safe_next, status_code=303)
         resp.set_cookie(COOKIE_NAME, token,
                         httponly=True, samesite="lax", max_age=60*60*24*30)
         return resp
@@ -269,13 +307,19 @@ async def page_history(request: Request, username=Depends(get_current_user)):
 async def page_settings(request: Request, username=Depends(get_current_user),
                          first: str = ""):
     env = user_env(username)
-    return templates.TemplateResponse(request=request, name="settings.html",
-                                       context={**base_ctx(username), "env": env, "first": first})
+    csrf = _make_csrf_token()
+    resp = templates.TemplateResponse(request=request, name="settings.html",
+                                       context={**base_ctx(username), "env": env,
+                                                "first": first, "csrf": csrf})
+    resp.set_cookie(CSRF_COOKIE, csrf, httponly=False, samesite="strict", max_age=3600)
+    return resp
 
 
 @app.post("/settings")
 async def save_settings(
+    request: Request,
     username=Depends(get_current_user),
+    csrf_token:        str = Form(default=""),
     odds_api_key:      str = Form(default=""),
     api_football_key:  str = Form(default=""),
     football_data_key: str = Form(default=""),
@@ -284,15 +328,23 @@ async def save_settings(
     base_stake:        str = Form(default="10"),
     fixed_pct:         str = Form(default="2"),
 ):
+    if not _verify_csrf(request, csrf_token):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
+    # Validate numeric fields
+    def _safe_float(val: str, default: float, lo: float, hi: float) -> str:
+        try:
+            return str(max(lo, min(hi, float(val.strip() or str(default)))))
+        except (ValueError, AttributeError):
+            return str(default)
     env_path = user_dir(username) / ".env"
     lines = [
         f"ODDS_API_KEY={odds_api_key.strip()}",
         f"API_FOOTBALL_KEY={api_football_key.strip()}",
         f"FOOTBALL_DATA_KEY={football_data_key.strip()}",
-        f"BANKROLL={bankroll.strip()}",
+        f"BANKROLL={_safe_float(bankroll, 1000, 1, 10_000_000)}",
         f"STAKE_METHOD={stake_method.strip()}",
-        f"BASE_STAKE={base_stake.strip()}",
-        f"FIXED_PCT={fixed_pct.strip()}",
+        f"BASE_STAKE={_safe_float(base_stake, 10, 0.01, 100_000)}",
+        f"FIXED_PCT={_safe_float(fixed_pct, 2, 0.01, 100)}",
     ]
     env_path.write_text("\n".join(lines), encoding="utf-8")
     return RedirectResponse("/settings", status_code=303)
@@ -304,17 +356,28 @@ async def admin_page(request: Request, username=Depends(get_current_user)):
     users = _load_users()
     if not users.get(username, {}).get("is_admin"):
         raise HTTPException(status_code=403, detail="Forbidden")
-    return templates.TemplateResponse(request=request, name="admin.html",
-                                       context={**base_ctx(username), "users": users})
+    csrf = _make_csrf_token()
+    resp = templates.TemplateResponse(request=request, name="admin.html",
+                                       context={**base_ctx(username), "users": users,
+                                                "csrf": csrf})
+    resp.set_cookie(CSRF_COOKIE, csrf, httponly=False, samesite="strict", max_age=3600)
+    return resp
 
 
 @app.post("/admin/create-user")
-async def create_user(username=Depends(get_current_user),
-                       new_username: str = Form(...),
-                       new_password: str = Form(...)):
+async def create_user(request: Request,
+                       username=Depends(get_current_user),
+                       csrf_token:    str = Form(default=""),
+                       new_username:  str = Form(...),
+                       new_password:  str = Form(...)):
+    if not _verify_csrf(request, csrf_token):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
     users = _load_users()
     if not users.get(username, {}).get("is_admin"):
         raise HTTPException(status_code=403)
+    new_username = new_username.strip()
+    if not new_username or not new_password:
+        raise HTTPException(status_code=400, detail="Username and password required")
     if new_username in users:
         raise HTTPException(status_code=400, detail="User already exists")
     users[new_username] = {
@@ -327,8 +390,12 @@ async def create_user(username=Depends(get_current_user),
 
 
 @app.post("/admin/delete-user")
-async def delete_user(username=Depends(get_current_user),
+async def delete_user(request: Request,
+                       username=Depends(get_current_user),
+                       csrf_token: str = Form(default=""),
                        target: str = Form(...)):
+    if not _verify_csrf(request, csrf_token):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
     users = _load_users()
     if not users.get(username, {}).get("is_admin"):
         raise HTTPException(status_code=403)
@@ -517,6 +584,10 @@ async def start_pregame_scan(req: ScanRequest, background_tasks: BackgroundTasks
                               username=Depends(get_current_user_api)):
     if _user_scan_status(username)["running"]:
         raise HTTPException(status_code=409, detail="Scan already running")
+    last = _last_scan_start.get(username, 0)
+    if time.time() - last < 60:
+        raise HTTPException(status_code=429, detail="Please wait before starting another scan")
+    _last_scan_start[username] = time.time()
     udir = str(user_dir(username))
     if req.clear_cache:
         clear_league_cache(udir)
@@ -536,7 +607,8 @@ async def scan_results(username=Depends(get_current_user_api)):
         # Restore today's scan from disk if memory is empty (e.g. after restart)
         disk = load_scan(str(user_dir(username)))
         if disk:
-            _pregame_cache[username] = disk
+            with _state_lock:
+                _pregame_cache[username] = disk
             cache = disk
     return {k: v for k, v in cache.items() if k != "_value_rows"}
 
@@ -576,10 +648,8 @@ def _run_pregame_scan(username: str, league_key: str):
     status["progress"] = 0.0
     _broadcast_sync(username, {"type": "scan_status", "data": dict(status)})
 
-    # Inject user's API keys into environment for this thread
-    for k, v in env.items():
-        os.environ.setdefault(k, v)
-    # Override with user's keys
+    # Set API keys only for this thread; restore original values when scan exits
+    _prev_env = {k: os.environ.get(k) for k in env}
     for k, v in env.items():
         os.environ[k] = v
 
@@ -854,7 +924,8 @@ def _run_pregame_scan(username: str, league_key: str):
             "stake_method":  stake_method,
             "_value_rows":   value_rows,
         }
-        _pregame_cache[username] = cache
+        with _state_lock:
+            _pregame_cache[username] = cache
         save_scan(rows, all_targets, tipster_picks, watchlist, udir)
 
         status["running"]  = False
@@ -870,6 +941,13 @@ def _run_pregame_scan(username: str, league_key: str):
         status["running"] = False
         status["text"]    = f"Error: {e}"
         _broadcast_sync(username, {"type": "scan_error", "error": str(e)})
+    finally:
+        # Restore original env values so other users' threads aren't affected
+        for k, v in _prev_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 @app.post("/api/scan/track")
@@ -973,6 +1051,7 @@ async def live_results(username=Depends(get_current_user_api)):
 
 
 def _live_loop(username: str, env: dict):
+    _prev = {k: os.environ.get(k) for k in env}
     for k, v in env.items():
         os.environ[k] = v
     from models.value_calculator import calculate_stake
@@ -1040,6 +1119,13 @@ def _live_loop(username: str, env: dict):
                 break
             time.sleep(0.5)
 
+    # Restore env after live loop exits
+    for k, v in _prev.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  TIPSTER
@@ -1060,6 +1146,7 @@ async def tipster_picks(username=Depends(get_current_user_api)):
 @app.get("/api/history/bets")
 async def history_bets(status: str = "all", limit: int = 200,
                        username=Depends(get_current_user_api)):
+    limit = max(1, min(limit, 1000))
     db_path = str(user_db(username))
     init_db(db_path)
     bets = get_all_bets(limit=limit, db_path=db_path)
@@ -1091,8 +1178,6 @@ async def auto_settle(background_tasks: BackgroundTasks,
 
 
 def _do_auto_settle(username: str, env: dict):
-    for k, v in env.items():
-        os.environ[k] = v
     result = auto_settle_from_api(
         db_path=str(user_db(username)),
         api_key=env.get("ODDS_API_KEY", ""),
@@ -1138,8 +1223,5 @@ async def version():
 
 @app.get("/api/credits")
 async def api_credits(username=Depends(get_current_user_api)):
-    env = user_env(username)
-    for k, v in env.items():
-        os.environ[k] = v
     from scrapers.odds_api import get_credits
     return get_credits()

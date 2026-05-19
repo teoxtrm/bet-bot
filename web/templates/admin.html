@@ -38,6 +38,7 @@
             <form method="post" action="/admin/delete-user" class="inline"
                   onsubmit="return confirm('Διαγραφή χρήστη {{ uname }};')">
               <input type="hidden" name="target" value="{{ uname }}"/>
+              <input type="hidden" name="csrf_token" value="{{ csrf }}"/>
               <button class="text-red text-xs hover:underline">Διαγραφή</button>
             </form>
             {% else %}
@@ -54,6 +55,7 @@
   <div class="bg-card rounded-xl p-5">
     <div class="text-sm font-semibold text-dim uppercase mb-4">Νέος Χρήστης</div>
     <form method="post" action="/admin/create-user" class="space-y-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}"/>
       <div>
         <label class="text-dim text-sm block mb-1">Username</label>
         <input name="new_username" type="text" required

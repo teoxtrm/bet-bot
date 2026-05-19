@@ -8,7 +8,9 @@ Allows ALL LEAGUES scan to skip leagues already scanned today (0 credits).
 """
 import json
 import dataclasses
+import os
 import pathlib
+import tempfile
 from datetime import date, datetime
 
 CACHE_FILE        = pathlib.Path("data/last_scan.json")
@@ -25,6 +27,16 @@ def _paths(user_dir=None):
 def _ensure_dir(user_dir=None):
     cache_file, _ = _paths(user_dir)
     cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _atomic_write(path: pathlib.Path, text: str):
+    """Write text to path atomically via temp file + rename."""
+    dir_ = path.parent
+    with tempfile.NamedTemporaryFile("w", dir=dir_, delete=False,
+                                     suffix=".tmp", encoding="utf-8") as tf:
+        tf.write(text)
+        tmp = tf.name
+    os.replace(tmp, path)
 
 
 def _target_to_dict(t) -> dict:
@@ -59,9 +71,7 @@ def save_scan(rows: list, targets: list, tipster_picks: list, watchlist: list = 
             "tipster_picks":  [_pick_to_dict(p) for p in tipster_picks],
             "watchlist":      [_watchlist_to_dict(g) for g in (watchlist or [])],
         }
-        cache_file.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _atomic_write(cache_file, json.dumps(data, ensure_ascii=False, indent=2))
     except Exception as e:
         print(f"[ScanCache] save error: {e}")
 
@@ -96,9 +106,7 @@ def save_league_scan(sport_key: str, rows: list, events_data: list, targets: lis
             "events_data": events_data,
             "targets":     [dataclasses.asdict(t) for t in targets],
         }
-        league_file.write_text(
-            json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _atomic_write(league_file, json.dumps(existing, ensure_ascii=False, indent=2))
     except Exception as e:
         print(f"[ScanCache] save_league error: {e}")
 
@@ -131,6 +139,6 @@ def clear_league_cache(user_dir=None):
     """Wipe the per-league cache."""
     _, league_file = _paths(user_dir)
     try:
-        league_file.write_text("{}", encoding="utf-8")
+        _atomic_write(league_file, "{}")
     except Exception:
         pass

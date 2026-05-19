@@ -96,6 +96,20 @@
     </div>
   </div>
 
+  <!-- Team Form Cache -->
+  <div class="bg-card rounded-xl overflow-hidden mt-4">
+    <div class="px-4 py-3 border-b border-muted flex items-center justify-between">
+      <span class="text-sm font-semibold text-dim uppercase">Team Form Cache</span>
+      <button id="formRefreshBtn" onclick="refreshFormCache()"
+        class="text-xs text-blue-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-muted">
+        ↻ Refresh
+      </button>
+    </div>
+    <div id="formCacheBody" class="p-4">
+      <div class="text-dim text-sm text-center py-4">Loading...</div>
+    </div>
+  </div>
+
   </div><!-- end right column -->
 
   </div><!-- end grid -->
@@ -171,5 +185,40 @@ async function refreshHealth() {
 
 // Auto-load on page open
 refreshHealth();
+refreshFormCache();
+
+async function refreshFormCache() {
+  const body = document.getElementById("formCacheBody");
+  const btn  = document.getElementById("formRefreshBtn");
+  btn.textContent = "↻ Checking…";
+  btn.disabled = true;
+  try {
+    const res  = await fetch("/api/admin/team-form/stats");
+    const data = await res.json();
+    if (!data.teams.length) {
+      body.innerHTML = `<div class="text-dim text-sm text-center py-4">No form data cached today.<br><span class="text-xs opacity-60">Run a pre-game scan for a covered league (EPL, La Liga, Bundesliga…)</span></div>`;
+    } else {
+      const formDot = r => ({ W:'#00b894', D:'#b2bec3', L:'#d63031' })[r] || '#636e72';
+      const dots = str => [...str].map(r =>
+        `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${formDot(r)}" title="${r}"></span>`
+      ).join('');
+      body.innerHTML = `
+        <div class="text-xs text-dim mb-2">${data.count} team${data.count !== 1 ? 's' : ''} cached today</div>
+        <div class="space-y-1.5">
+          ${data.teams.map(t => `
+            <div class="flex items-center gap-2 text-xs rounded px-2 py-1.5 bg-muted/40">
+              <span class="font-medium text-white w-36 truncate" title="${t.team}">${t.team}</span>
+              <span class="text-dim flex gap-0.5 items-center">${dots(t.form)}</span>
+              <span class="ml-auto text-dim tabular-nums">${t.scored}g / ${t.conceded}ga</span>
+            </div>`).join('')}
+        </div>`;
+    }
+  } catch (e) {
+    body.innerHTML = `<div class="text-red-400 text-sm text-center py-4">Error: ${e.message}</div>`;
+  } finally {
+    btn.textContent = "↻ Refresh";
+    btn.disabled = false;
+  }
+}
 </script>
 {% endblock %}

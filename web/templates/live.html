@@ -13,33 +13,34 @@
     <div id="live-status-text" class="text-dim text-sm"></div>
   </div>
 
+  <!-- Today's Watch List strip -->
+  <div id="watchlist-strip-wrap" class="hidden">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-xs font-bold uppercase tracking-wide text-dim">Today's Watch List</span>
+      <span id="wl-count" class="text-xs bg-muted text-dim px-2 py-0.5 rounded-full"></span>
+      <span class="text-xs text-dim">— from pre-game scan</span>
+    </div>
+    <div id="watchlist-strip" class="flex flex-wrap gap-2"></div>
+  </div>
+
   <!-- Controls -->
   <div class="bg-card rounded-xl p-3 flex flex-wrap items-center gap-3">
-    <!-- Mode -->
     <select id="live-mode" class="bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
       <option value="auto">Auto (All Leagues)</option>
       <option value="manual">Manual (select league)</option>
     </select>
-
-    <!-- Manual league (hidden by default) -->
-    <select id="live-league" class="hidden bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
-    </select>
-
-    <!-- Max tier -->
+    <select id="live-league" class="hidden bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none"></select>
     <select id="live-tier" class="bg-muted text-white rounded-lg px-3 py-2 text-sm border border-muted focus:outline-none">
       <option value="1">Max Tier 1</option>
       <option value="2" selected>Max Tier 2</option>
       <option value="3">Max Tier 3</option>
     </select>
-
-    <!-- Interval -->
     <div class="flex items-center gap-2">
       <label class="text-dim text-sm">Interval:</label>
       <input id="live-interval" type="number" value="120" min="30" max="600"
         class="bg-muted text-white rounded-lg px-3 py-2 text-sm w-20 border border-muted focus:outline-none"/>
       <span class="text-dim text-sm">sec</span>
     </div>
-
     <button id="btn-live-start"
       class="bg-green/20 hover:bg-green/30 border border-green text-green font-semibold px-5 py-2 rounded-lg text-sm transition-colors">
       ▶ Start
@@ -53,7 +54,6 @@
       class="text-dim hover:text-white border border-muted px-4 py-2 rounded-lg text-sm transition-colors">
       Clear
     </button>
-
     <div class="text-dim text-xs ml-auto" id="live-iter"></div>
   </div>
 
@@ -63,11 +63,11 @@
       <table class="w-full text-sm">
         <thead class="bg-muted text-blue-300 uppercase text-xs">
           <tr>
-            <th class="px-3 py-3 text-center">Ώρα</th>
-            <th class="px-3 py-3 text-left">Αγώνας</th>
-            <th class="px-3 py-3 text-center">Σκορ</th>
-            <th class="px-3 py-3 text-center">λεπτό</th>
-            <th class="px-3 py-3 text-center">Αγορά</th>
+            <th class="px-3 py-3 text-center">Time</th>
+            <th class="px-3 py-3 text-left">Match</th>
+            <th class="px-3 py-3 text-center">Score</th>
+            <th class="px-3 py-3 text-center">Min</th>
+            <th class="px-3 py-3 text-center">Market</th>
             <th class="px-3 py-3 text-center">Live Prob</th>
             <th class="px-3 py-3 text-center">SoT</th>
             <th class="px-3 py-3 text-center">Corners</th>
@@ -79,7 +79,7 @@
           </tr>
         </thead>
         <tbody id="live-tbody">
-          <tr><td colspan="13" class="text-center text-dim py-12">Πάτα Start για να ξεκινήσει η παρακολούθηση</td></tr>
+          <tr><td colspan="13" class="text-center text-dim py-12">Press Start to begin monitoring</td></tr>
         </tbody>
       </table>
     </div>
@@ -96,49 +96,107 @@
 
 {% block scripts %}
 <script>
-// Load leagues for manual mode
-fetch('/api/leagues').then(r=>r.json()).then(d=>{
+// ── Watchlist: load from today's pre-game scan ────────────────────────────────
+let _watchlist = [];  // [{home_team, away_team, ht_tip, live_action, live_score, kickoff, league}]
+
+fetch('/api/tipster/picks').then(r => r.json()).then(d => {
+  _watchlist = d.watchlist || [];
+  if (!_watchlist.length) return;
+  renderWatchlistStrip(_watchlist);
+  document.getElementById('watchlist-strip-wrap').classList.remove('hidden');
+  document.getElementById('wl-count').textContent = _watchlist.length;
+}).catch(() => {});
+
+function ratingInfo(score) {
+  if (score >= 0.72) return { label: 'MUST WATCH', cls: 'border-green text-green' };
+  if (score >= 0.58) return { label: 'WATCH',      cls: 'border-yellow text-yellow' };
+  return               { label: 'MONITOR',     cls: 'border-muted text-dim' };
+}
+function koTime(iso) {
+  try {
+    const dt = new Date(iso.endsWith('Z') || iso.includes('+') ? iso : iso + 'Z');
+    return dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch { return (iso || '').slice(11, 16) || '—'; }
+}
+
+function renderWatchlistStrip(games) {
+  const strip = document.getElementById('watchlist-strip');
+  strip.innerHTML = games.map(g => {
+    const ri  = ratingInfo(g.live_score);
+    const ko  = koTime(g.kickoff);
+    const htCls = g.ht_tip && g.ht_tip.includes('HT') ? 'text-yellow' : 'text-blue-300';
+    return `<div class="flex items-center gap-2 bg-card border ${ri.cls} rounded-lg px-3 py-2 text-xs"
+                 data-home="${g.home_team}" data-away="${g.away_team}">
+      <span class="font-semibold">${g.home_team} vs ${g.away_team}</span>
+      <span class="text-dim">|</span>
+      <span class="${htCls} font-semibold">${g.ht_tip || '—'}</span>
+      <span class="text-dim">${ko}</span>
+      <span class="font-bold ${ri.cls.split(' ')[1]}">${ri.label}</span>
+    </div>`;
+  }).join('');
+}
+
+// Check if a live match is in the watchlist (fuzzy name match)
+function _isWatched(homeTeam, awayTeam) {
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return _watchlist.some(g =>
+    norm(g.home_team).includes(norm(homeTeam).slice(0, 5)) ||
+    norm(g.away_team).includes(norm(awayTeam).slice(0, 5))
+  );
+}
+
+function _watchedTip(homeTeam, awayTeam) {
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const g = _watchlist.find(g =>
+    norm(g.home_team).includes(norm(homeTeam).slice(0, 5)) ||
+    norm(g.away_team).includes(norm(awayTeam).slice(0, 5))
+  );
+  return g ? g.ht_tip : null;
+}
+
+// ── League select ─────────────────────────────────────────────────────────────
+fetch('/api/leagues').then(r => r.json()).then(d => {
   const sel = document.getElementById('live-league');
-  // skip tier/all options
-  d.leagues.filter(l=>!l.startsWith('ALL')&&!l.startsWith('TIER')).forEach(l=>{
+  d.leagues.filter(l => !l.startsWith('ALL') && !l.startsWith('TIER') &&
+                        !l.startsWith('PRIME') && !l.startsWith('STARTER')).forEach(l => {
     const opt = document.createElement('option');
-    opt.value = l; opt.textContent = l.replace(/_/g,' ').toUpperCase();
+    opt.value = l; opt.textContent = l.replace(/_/g, ' ').toUpperCase();
     sel.appendChild(opt);
   });
-}).catch(()=>{});
+}).catch(() => {});
 
-document.getElementById('live-mode').addEventListener('change', function(){
+document.getElementById('live-mode').addEventListener('change', function () {
   document.getElementById('live-league').classList.toggle('hidden', this.value !== 'manual');
   document.getElementById('live-tier').classList.toggle('hidden', this.value === 'manual');
 });
 
-document.getElementById('btn-live-start').addEventListener('click', ()=>{
+// ── Controls ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-live-start').addEventListener('click', () => {
   const mode     = document.getElementById('live-mode').value;
   const tier     = parseInt(document.getElementById('live-tier').value);
   const interval = parseInt(document.getElementById('live-interval').value) || 120;
   const sk       = mode === 'manual' ? document.getElementById('live-league').value : '';
   fetch('/api/live/start', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
+    method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({mode, sport_key: sk, interval, max_tier: tier}),
-  }).then(r=>r.json()).then(()=>{
+  }).then(r => r.json()).then(() => {
     document.getElementById('btn-live-start').disabled = true;
     document.getElementById('btn-live-stop').disabled  = false;
     document.getElementById('live-badge').classList.remove('hidden');
     logLine('▶ Scan started');
-  }).catch(e=>alert('Error: '+e));
+  }).catch(e => alert('Error: ' + e));
 });
 
-document.getElementById('btn-live-stop').addEventListener('click', ()=>{
-  fetch('/api/live/stop', {method:'POST'}).then(()=>{
+document.getElementById('btn-live-stop').addEventListener('click', () => {
+  fetch('/api/live/stop', {method: 'POST'}).then(() => {
     document.getElementById('btn-live-start').disabled = false;
     document.getElementById('btn-live-stop').disabled  = true;
     document.getElementById('live-badge').classList.add('hidden');
     logLine('■ Scan stopped');
-  }).catch(()=>{});
+  }).catch(() => {});
 });
 
-document.getElementById('btn-live-clear').addEventListener('click', ()=>{
+document.getElementById('btn-live-clear').addEventListener('click', () => {
   document.getElementById('live-tbody').innerHTML =
     '<tr><td colspan="13" class="text-center text-dim py-12">—</td></tr>';
   document.getElementById('live-log').innerHTML = '';
@@ -152,82 +210,87 @@ function logLine(txt) {
   while (log.children.length > 100) log.removeChild(log.lastChild);
 }
 
+// ── WebSocket ─────────────────────────────────────────────────────────────────
 connectWS(msg => {
   if (msg.type === 'live_update') {
     renderLive(msg.data || []);
     const iter = document.getElementById('live-iter');
-    if (iter) iter.textContent = `Scan #${msg.iteration}  ${msg.ts||''}`;
-    logLine(`Scan #${msg.iteration} — ${(msg.data||[]).length} αγώνες`);
+    if (iter) iter.textContent = `Scan #${msg.iteration}  ${msg.ts || ''}`;
+    logLine(`Scan #${msg.iteration} — ${(msg.data || []).length} matches`);
   }
-  if (msg.type === 'live_error') {
-    logLine('❌ ' + msg.error);
-  }
+  if (msg.type === 'live_error') logLine('❌ ' + msg.error);
 });
 
+// ── Render live table ─────────────────────────────────────────────────────────
 function renderLive(results) {
   const tbody = document.getElementById('live-tbody');
   const rows  = [];
 
   results.forEach(m => {
-    const stats    = m.live_stats || {};
-    const sot      = stats.shots_on_target != null ? stats.shots_on_target : '—';
-    const corners  = stats.corners != null ? stats.corners : '—';
-    const poss     = stats.possession != null ? stats.possession + '%' : '—';
-    const timeStr  = m.commence ? m.commence.substring(11,16) : '—';
+    const stats   = m.live_stats || {};
+    const sot     = stats.shots_on_target != null ? stats.shots_on_target : '—';
+    const corners = stats.corners         != null ? stats.corners         : '—';
+    const poss    = stats.possession      != null ? stats.possession + '%': '—';
+    const timeStr = m.commence ? m.commence.substring(11, 16) : '—';
+    const watched = _isWatched(m.home_team || '', m.away_team || '');
+    const watchTip = watched ? _watchedTip(m.home_team || '', m.away_team || '') : null;
 
-    // Over 2.5 row
     const vbets = m.value_bets || [];
     const best  = vbets[0];
-    const o25prob = m.live_over_prob != null ? (m.live_over_prob*100).toFixed(1)+'%' : '—';
-    const hasValue25 = vbets.length > 0;
-    rows.push(buildRow(m, timeStr, 'Over 2.5', o25prob, sot, corners, poss, best, hasValue25, false));
+    const o25prob = m.live_over_prob != null ? (m.live_over_prob * 100).toFixed(1) + '%' : '—';
+    rows.push(buildRow(m, timeStr, 'Over 2.5', o25prob, sot, corners, poss, best, vbets.length > 0, false, watched, watchTip));
 
-    // HT rows — only if minute ≤ 45
     if ((m.minute || 0) <= 45) {
-      const ht05b  = (m.ht_05_bets || [])[0];
-      const ht05p  = m.ht_05_prob  != null ? (m.ht_05_prob*100).toFixed(1)+'%' : '—';
-      rows.push(buildRow(m, '↳', 'O0.5 HT', ht05p, '','','', ht05b, !!(m.ht_05_bets||[]).length, true));
+      const ht05b = (m.ht_05_bets || [])[0];
+      const ht05p = m.ht_05_prob != null ? (m.ht_05_prob * 100).toFixed(1) + '%' : '—';
+      rows.push(buildRow(m, '↳', 'O0.5 HT', ht05p, '', '', '', ht05b, !!(m.ht_05_bets || []).length, true, watched, watchTip));
 
-      const ht15b  = (m.ht_15_bets || [])[0];
-      const ht15p  = m.ht_15_prob  != null ? (m.ht_15_prob*100).toFixed(1)+'%' : '—';
-      rows.push(buildRow(m, '↳', 'O1.5 HT', ht15p, '','','', ht15b, !!(m.ht_15_bets||[]).length, true));
+      const ht15b = (m.ht_15_bets || [])[0];
+      const ht15p = m.ht_15_prob != null ? (m.ht_15_prob * 100).toFixed(1) + '%' : '—';
+      rows.push(buildRow(m, '↳', 'O1.5 HT', ht15p, '', '', '', ht15b, !!(m.ht_15_bets || []).length, true, watched, watchTip));
     }
   });
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="text-center text-dim py-12">Δεν βρέθηκαν live αγώνες</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="text-center text-dim py-12">No live matches found</td></tr>';
     return;
   }
-
-  // Sort: value rows first
-  rows.sort((a,b) => (b.hasValue ? 1 : 0) - (a.hasValue ? 1 : 0));
-  tbody.innerHTML = rows.map(r=>r.html).join('');
+  rows.sort((a, b) => (b.priority - a.priority));
+  tbody.innerHTML = rows.map(r => r.html).join('');
 }
 
-function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValue, isHT) {
-  const score  = `${m.home_score}–${m.away_score}`;
-  const min    = m.minute != null ? m.minute+"'" : '—';
-  const bm     = bestBet ? bestBet.bookmaker : '—';
-  const odds   = bestBet ? bestBet.bookmaker_odds : '—';
-  const edge   = bestBet ? (bestBet.value_edge*100).toFixed(1)+'%' : '—';
+function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValue, isHT, watched, watchTip) {
+  const score = `${m.home_score}–${m.away_score}`;
+  const min   = m.minute != null ? m.minute + "'" : '—';
+  const bm    = bestBet ? bestBet.bookmaker       : '—';
+  const odds  = bestBet ? bestBet.bookmaker_odds  : '—';
+  const edge  = bestBet ? (bestBet.value_edge * 100).toFixed(1) + '%' : '—';
   const edgeCls = bestBet && bestBet.value_edge > 0 ? 'text-green' : 'text-red';
 
   let status = '', statusCls = '';
   if (hasValue) {
-    const sot_n = parseInt(sot);
-    if (!isNaN(sot_n) && sot_n >= 3) {
-      status = 'HIGH CONF!'; statusCls = 'text-pink-400 font-bold';
-    } else {
-      status = 'VALUE!'; statusCls = 'text-green font-bold';
-    }
+    const sotn = parseInt(sot);
+    status    = !isNaN(sotn) && sotn >= 3 ? 'HIGH CONF!' : 'VALUE!';
+    statusCls = !isNaN(sotn) && sotn >= 3 ? 'text-pink-400 font-bold' : 'text-green font-bold';
+  } else if (watched && !isHT) {
+    status = '👁 WATCH'; statusCls = 'text-yellow font-semibold';
   }
 
-  const rowCls = hasValue ? 'bg-green/5 border-l-2 border-green' : (isHT ? 'bg-white/[0.02]' : '');
+  // watchTip badge shown in match cell (only on main row)
+  const watchBadge = watched && !isHT && watchTip
+    ? `<span class="ml-1 text-xs text-yellow opacity-80">[${watchTip}]</span>` : '';
+
+  // row background: value > watched > ht sub-row > normal
+  let rowCls = isHT ? 'bg-white/[0.02]' : '';
+  if (watched && !isHT) rowCls = 'bg-yellow/5 border-l-2 border-yellow';
+  if (hasValue)         rowCls = 'bg-green/5 border-l-2 border-green';
+
   const matchName = isHT ? '' : `${m.home_team} vs ${m.away_team}`;
+  const priority  = hasValue ? 2 : (watched ? 1 : 0);
 
   const html = `<tr class="${rowCls} border-b border-muted/20 hover:bg-white/5">
     <td class="px-2 py-2 text-center text-dim text-xs">${timeStr}</td>
-    <td class="px-3 py-2 ${isHT ? 'pl-8 text-dim' : 'font-medium'}">${matchName}</td>
+    <td class="px-3 py-2 ${isHT ? 'pl-8 text-dim' : 'font-medium'}">${matchName}${watchBadge}</td>
     <td class="px-2 py-2 text-center font-mono">${isHT ? '' : score}</td>
     <td class="px-2 py-2 text-center text-dim">${isHT ? '' : min}</td>
     <td class="px-2 py-2 text-center text-xs">${market}</td>
@@ -240,7 +303,7 @@ function buildRow(m, timeStr, market, prob, sot, corners, poss, bestBet, hasValu
     <td class="px-2 py-2 text-center font-mono ${edgeCls}">${edge}</td>
     <td class="px-2 py-2 text-center ${statusCls}">${status}</td>
   </tr>`;
-  return { html, hasValue };
+  return { html, priority };
 }
 </script>
 {% endblock %}

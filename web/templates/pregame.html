@@ -23,7 +23,10 @@
     <label class="flex items-center gap-2 text-sm text-dim cursor-pointer select-none">
       <input type="checkbox" id="clear-cache-cb" class="accent-accent"/> Clear cache
     </label>
-    <span id="scan-status-text" class="text-dim text-xs ml-auto hidden md:block"></span>
+    <span id="scan-status-text" class="text-dim text-xs hidden md:block"></span>
+    <span id="credits-badge" class="ml-auto text-xs text-dim bg-muted px-3 py-1 rounded-full hidden">
+      Odds API: <span id="credits-remaining">—</span> left
+    </span>
     <div id="scan-progress-wrap" class="hidden w-full mt-1">
       <div class="w-full bg-muted rounded-full h-1">
         <div id="scan-progress-bar" class="bg-accent h-1 rounded-full transition-all duration-300" style="width:0%"></div>
@@ -134,6 +137,19 @@ function koTime(iso) {
 function scoreBarColor(s) {
   return s >= 0.72 ? '#00b894' : s >= 0.58 ? '#fdcb6e' : '#636e72';
 }
+
+// ── Credits ───────────────────────────────────────────────────────────────────
+fetch('/api/credits').then(r => r.json()).then(d => {
+  const rem = d.remaining;
+  if (rem != null) {
+    document.getElementById('credits-remaining').textContent = rem;
+    const badge = document.getElementById('credits-badge');
+    badge.classList.remove('hidden');
+    if (rem <= 50)  badge.classList.add('text-red');
+    else if (rem <= 150) badge.classList.add('text-yellow');
+    else badge.classList.add('text-green');
+  }
+}).catch(() => {});
 
 // ── Load leagues ──────────────────────────────────────────────────────────────
 fetch('/api/leagues').then(r => r.json()).then(d => {

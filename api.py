@@ -391,7 +391,14 @@ async def scan_status(username=Depends(get_current_user_api)):
 
 @app.get("/api/scan/results")
 async def scan_results(username=Depends(get_current_user_api)):
-    return {k: v for k, v in _user_pregame(username).items() if k != "_value_rows"}
+    cache = _user_pregame(username)
+    if not cache.get("rows"):
+        # Restore today's scan from disk if memory is empty (e.g. after restart)
+        disk = load_scan(str(user_dir(username)))
+        if disk:
+            _pregame_cache[username] = disk
+            cache = disk
+    return {k: v for k, v in cache.items() if k != "_value_rows"}
 
 
 @app.get("/api/leagues")

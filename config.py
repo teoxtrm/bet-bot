@@ -37,6 +37,13 @@ LIVE_MIN_MINUTE        = 8   # Ignore first 8 mins (volatile)
 LIVE_MAX_MINUTE        = 78  # Ignore after 78 mins (too late for HT bets)
 LIVE_MAX_SCORE_DIFF    = 2   # Skip blowouts
 
+# ── Data source providers ─────────────────────────────────────────────────────
+# Change ONE value here to swap a data source (free → paid or alternative).
+# Each provider name maps to a concrete implementation in scrapers/.
+FORM_PROVIDER    = "football_data"  # "football_data" | "fBref" | "api_football"
+FIXTURE_PROVIDER = "api_football"   # "api_football"  | "football_data"
+ODDS_PROVIDER    = "odds_api"       # "odds_api"       | (future: pinnacle_direct)
+
 LIVE_TIME_WEIGHTS = {
     "0-15":  {"multiplier": 1.00},
     "16-30": {"multiplier": 1.05},

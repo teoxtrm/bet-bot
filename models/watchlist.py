@@ -27,6 +27,7 @@ class WatchlistGame:
     live_score:   float     # 0.0–1.0 composite
     ht_tip:       str = ""  # primary market to watch, e.g. "HT Over 0.5"
     live_action:  str = ""  # instructions for live play
+    data_flags:   dict = field(default_factory=dict)
 
     @property
     def kickoff_time(self) -> str:
@@ -209,6 +210,7 @@ def generate_watchlist(
             live_score   = live_score,
             ht_tip       = ht_tip,
             live_action  = _action_full,
+            data_flags   = item.get("data_flags", {}),
         ))
 
     games.sort(key=lambda g: -g.live_score)

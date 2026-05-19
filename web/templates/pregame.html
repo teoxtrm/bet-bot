@@ -247,9 +247,17 @@ function renderTips(picks) {
     return;
   }
   grid.innerHTML = picks.map(p => {
-    const tier = pickTier(p);
-    const ts   = TIER_STYLE[tier];
-    const conf = Math.round(p.confidence * 100);
+    const tier    = pickTier(p);
+    const ts      = TIER_STYLE[tier];
+    const conf    = Math.round(p.confidence * 100);
+    const flags   = p.data_flags || {};
+    const warnings = Object.entries(flags)
+      .filter(([,v]) => v !== 'ok')
+      .map(([k,v]) => `${k}: ${v}`);
+    const badge   = warnings.length
+      ? (Object.entries(flags).some(([k,v]) => ['pinnacle','odds_api'].includes(k) && v !== 'ok')
+          ? '❌' : '⚠️')
+      : '';
     const signals = (p.signals || []).map(s =>
       `<span class="text-xs px-2 py-0.5 rounded-full bg-muted/80 text-dim">${s}</span>`
     ).join('');
@@ -259,7 +267,10 @@ function renderTips(picks) {
   <div class="px-4 py-2.5 flex items-center justify-between" style="background:${ts.bg}">
     <span class="text-xs font-bold tracking-widest px-2.5 py-1 rounded"
       style="color:${ts.text}; border:1px solid ${ts.border}55">${tier}</span>
-    <span class="text-xs opacity-70" style="color:${ts.text}">${p.league}</span>
+    <div class="flex items-center gap-2">
+      ${badge ? `<span title="${warnings.join(' | ')}" class="text-xs cursor-help">${badge} <span class="text-xs opacity-70">${warnings[0] || ''}</span></span>` : ''}
+      <span class="text-xs opacity-70" style="color:${ts.text}">${p.league}</span>
+    </div>
   </div>
   <!-- Match -->
   <div class="px-4 pt-3 pb-1">
@@ -307,6 +318,9 @@ function renderWatchlist(games) {
     const ko  = koTime(g.kickoff);
     const bar = Math.round(g.live_score * 100);
     const hasSteam = g.live_action && g.live_action.includes('🔥');
+    const gFlags   = g.data_flags || {};
+    const gWarnings = Object.entries(gFlags).filter(([,v]) => v !== 'ok').map(([k,v]) => `${k}: ${v}`);
+    const gBadge   = gWarnings.length ? '⚠️' : '';
     const htCls = g.ht_tip && g.ht_tip.includes('HT') ? 'text-yellow font-semibold' :
                   g.ht_tip && g.ht_tip.includes('Over') ? 'text-blue-300 font-semibold' : 'text-dim';
     const rowBg = hasSteam ? 'bg-orange-900/10 border-l-2 border-orange-400' :
@@ -319,7 +333,7 @@ function renderWatchlist(games) {
         <span class="text-xs ${ri.cls}">${ri.label}</span>
       </td>
       <td class="px-3 py-3">
-        <div class="font-medium text-sm">${g.home_team} <span class="text-dim text-xs font-normal">vs</span> ${g.away_team}${steamBadge}</div>
+        <div class="font-medium text-sm">${g.home_team} <span class="text-dim text-xs font-normal">vs</span> ${g.away_team}${steamBadge}${gBadge ? `<span class="ml-1 text-xs cursor-help" title="${gWarnings.join(' | ')}">${gBadge}</span>` : ''}</div>
         <div class="text-xs text-dim mt-0.5">${g.league}</div>
       </td>
       <td class="px-3 py-3 text-center font-mono text-sm">${ko}</td>

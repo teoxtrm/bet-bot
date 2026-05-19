@@ -7,7 +7,7 @@ No extra API calls — consumes data already fetched by the pre-game scan.
 
 from dataclasses import dataclass, field
 from config import MAX_PREGAME_TIPS, MIN_TIP_PROBABILITY, MIN_TIP_ODDS_SINGLE, MIN_TIP_ODDS_COMBO
-from models.pregame_model import poisson_over_prob
+from models.pregame_model import btts_prob, poisson_over_prob, split_xg
 
 # ── Confidence tiers ──────────────────────────────────────────────────────────
 TIER_LOCK   = 0.82
@@ -27,7 +27,8 @@ TIER_COLORS = {
 }
 
 # Markets where form xG is relevant
-_GOAL_MARKETS = {"Over 2.5", "Over 1.5", "Under 2.5", "Under 1.5", "HT Over 0.5", "HT Over 1.5"}
+_GOAL_MARKETS = {"Over 2.5", "Over 1.5", "Under 2.5", "Under 1.5",
+                 "HT Over 0.5", "HT Over 1.5", "BTTS Yes"}
 
 # Minimum Pinnacle no-vig probability to even consider a market
 _MARKET_FLOOR = {
@@ -40,6 +41,7 @@ _MARKET_FLOOR = {
     "Draw":        0.28,   # combo legs only
     "HT Over 0.5": 0.68,
     "HT Over 1.5": 0.38,
+    "BTTS Yes":    0.52,
 }
 
 
@@ -109,6 +111,8 @@ def _best_odds_for(event: dict, market_key: str, side: str, point: str | None) -
             odds = (bd.get(market_key) or {}).get(key) or 0.0
         elif market_key == "h2h":
             odds = (bd.get("1x2") or {}).get(side) or 0.0
+        elif market_key == "btts":
+            odds = (bd.get("btts") or {}).get(side) or 0.0
         else:
             odds = 0.0
         if odds and odds > best_odds:
@@ -184,6 +188,15 @@ def _score(market: str, prob: float, xg: float, p_1x2: dict | None) -> tuple[flo
         elif prob >= 0.42:
             bonus = 0.01
             signals.append("Active first half expected")
+
+    elif market == "BTTS Yes":
+        signals.append(f"Pinnacle BTTS: {prob:.0%} (Poisson-derived)")
+        if prob >= 0.65:
+            bonus = 0.025
+            signals.append("Both teams in strong scoring form")
+        elif prob >= 0.57:
+            bonus = 0.01
+            signals.append("Both teams likely to score")
 
     return min(0.95, prob + bonus), signals
 
@@ -333,12 +346,22 @@ def score_event(
             pt_ht15 = str(p_ht15.get("point", 1.5)).replace(".", "_")
             checks.append(("HT Over 1.5", ht_15, "totals_h1", "over", pt_ht15))
 
+    # BTTS from Pinnacle-derived Poisson model (split total xG into home/away)
+    _pin_btts = None
+    _lambda_h = _lambda_a = None
+    if p_1x2 and p_ou and xg > 0.3:
+        _lambda_h, _lambda_a = split_xg(xg, p_1x2.get("home", 0.33))
+        _pin_btts = btts_prob(_lambda_h, _lambda_a)
+        if _pin_btts >= _MARKET_FLOOR["BTTS Yes"]:
+            checks.append(("BTTS Yes", _pin_btts, "btts", "yes", None))
+
     # ── Score each check, populate combo pools ────────────────────────────────
     win_pool:   dict = {}   # {"Home Win": {conf, odds, label="1"}, ...}
     over_pool:  dict = {}   # {"Over 2.5": {conf, odds, bm}, ...}
     under_pool: dict = {}
     ht_pool:    dict = {}   # {"HT Over 0.5": {conf, odds, bm}, ...}
     draw_pool:  dict = {}
+    btts_pool:  dict = {}   # {"BTTS Yes": {conf, odds, bm}, ...}
 
     for market, prob, mkt_key, side, pt in checks:
         conf, signals = _score(market, prob, xg, p_1x2)
@@ -367,6 +390,8 @@ def score_event(
             draw_pool["Draw"] = {"conf": conf, "odds": best_odds, "bm": best_bm}
         elif market in ("HT Over 0.5", "HT Over 1.5"):
             ht_pool[market] = {"conf": conf, "odds": best_odds, "bm": best_bm}
+        elif market == "BTTS Yes":
+            btts_pool["BTTS Yes"] = {"conf": conf, "odds": best_odds, "bm": best_bm}
 
         # Steam boost: sharp money on this market → higher confidence
         if market in _steam_set:
@@ -388,12 +413,14 @@ def score_event(
                 signals=signals, data_flags=data_flags or {},
             ))
 
-    # BTTS from soft-book odds (no Pinnacle line)
-    btts_odds, btts_bm = _best_odds_for(event, "btts", "yes", None)
-    btts_pool: dict = {}
-    if btts_odds > 1.0:
-        btts_conf = min(0.85, 1 / btts_odds * 1.08)
-        btts_pool["BTTS Yes"] = {"conf": btts_conf, "odds": btts_odds, "bm": btts_bm}
+    # btts_pool is populated above (Pinnacle-derived prob + soft-book odds).
+    # Fallback: if no Pinnacle 1X2+Totals available, estimate from soft-book odds.
+    if not btts_pool:
+        btts_odds, btts_bm = _best_odds_for(event, "btts", "yes", None)
+        if btts_odds > 1.0:
+            btts_conf = min(0.85, 1 / btts_odds * 1.08)
+            if btts_conf >= _MARKET_FLOOR["BTTS Yes"]:
+                btts_pool["BTTS Yes"] = {"conf": btts_conf, "odds": btts_odds, "bm": btts_bm}
 
     # ── Combos ────────────────────────────────────────────────────────────────
     combo_args = dict(
@@ -409,6 +436,19 @@ def score_event(
                 leg1_label=wd["label"], leg1_conf=wd["conf"], leg1_odds=wd["odds"],
                 leg2_label=over_mkt, leg2_conf=od["conf"], leg2_odds=od["odds"],
                 leg2_bm=od["bm"], corr_bonus=1.08,
+            )
+            if combo:
+                picks.append(combo)
+
+    # 1 + BTTS Yes / 2 + BTTS Yes
+    for win_mkt, wd in win_pool.items():
+        if btts_pool:
+            bd = btts_pool["BTTS Yes"]
+            combo = _make_combo(
+                **combo_args,
+                leg1_label=wd["label"], leg1_conf=wd["conf"], leg1_odds=wd["odds"],
+                leg2_label="BTTS Yes", leg2_conf=bd["conf"], leg2_odds=bd["odds"],
+                leg2_bm=bd["bm"], corr_bonus=0.97,
             )
             if combo:
                 picks.append(combo)

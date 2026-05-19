@@ -665,12 +665,48 @@ def _run_pregame_scan(username: str, league_key: str):
 
 @app.post("/api/scan/track")
 async def track_bets(username=Depends(get_current_user_api)):
-    value_rows = _user_pregame(username).get("_value_rows", [])
-    if not value_rows:
-        raise HTTPException(status_code=400, detail="No value bets to track")
-    db_path = str(user_db(username))
-    tracked = 0
+    cache     = _user_pregame(username)
+    picks     = cache.get("tipster_picks", [])   # curated tips (primary)
+    value_rows = cache.get("_value_rows", [])     # raw value bets (fallback)
+
+    if not picks and not value_rows:
+        raise HTTPException(status_code=400, detail="No picks to track — run a scan first")
+
+    from models.value_calculator import kelly_criterion
+    env      = user_env(username)
+    bankroll = float(env.get("BANKROLL", "1000"))
+    db_path  = str(user_db(username))
+    tracked  = 0
+
+    # Track tipster picks first (deduplicated by event_id + market)
+    seen = set()
+    for p in picks:
+        key = (p.get("event_id", ""), p.get("market", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        prob = p.get("confidence", 0.6)
+        odds = p.get("best_odds", 1.5)
+        edge = round(prob * odds - 1, 4)
+        kr   = kelly_criterion(prob, odds, bankroll)
+        bid  = track_value_bet(
+            value_result={"our_probability": prob, "bookmaker": p.get("best_bookmaker", ""),
+                          "bookmaker_odds": odds, "value_edge": edge, "is_value_bet": True},
+            kelly_result=kr,
+            match_info={"event_id": p.get("event_id", ""), "match_date": p.get("date", ""),
+                        "home_team": p.get("home_team", ""), "away_team": p.get("away_team", ""),
+                        "bet_type": p.get("market", "")},
+            league=p.get("league", ""), db_path=db_path,
+        )
+        if bid > 0:
+            tracked += 1
+
+    # Also track any raw value bets not already covered by a pick
     for r in value_rows:
+        key = (r.get("event_id", ""), r.get("market", ""))
+        if key in seen:
+            continue
+        seen.add(key)
         vr = r.get("value_result") or {
             "our_probability": r["prob"], "bookmaker": r["bookmaker"],
             "bookmaker_odds": r["odds"], "value_edge": r["edge"],
@@ -678,13 +714,14 @@ async def track_bets(username=Depends(get_current_user_api)):
         kr = r.get("kelly_result") or {"suggested_bet": r["kelly"]}
         bid = track_value_bet(
             value_result=vr, kelly_result=kr,
-            match_info={"event_id": r.get("event_id",""), "match_date": r["date"],
+            match_info={"event_id": r.get("event_id", ""), "match_date": r["date"],
                         "home_team": r["home_team"], "away_team": r["away_team"],
                         "bet_type": r["market"]},
             league=r["league"], db_path=db_path,
         )
         if bid > 0:
             tracked += 1
+
     return {"tracked": tracked}
 
 

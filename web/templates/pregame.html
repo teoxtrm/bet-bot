@@ -18,7 +18,7 @@
     <button id="btn-track" disabled
       class="bg-emerald-800 hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed
              text-white font-semibold px-4 py-2 rounded-lg text-sm transition-colors">
-      💾 Track Bets
+      💾 Track Tips
     </button>
     <label class="flex items-center gap-2 text-sm text-dim cursor-pointer select-none">
       <input type="checkbox" id="clear-cache-cb" class="accent-accent"/> Clear cache
@@ -166,7 +166,8 @@ fetch('/api/scan/results').then(r => r.json()).then(d => {
     renderTips(d.tipster_picks || []);
     renderWatchlist(d.watchlist || []);
     renderMarkets(d.rows, d.value_count || 0);
-    if (d.value_count > 0) document.getElementById('btn-track').disabled = false;
+    if ((d.tipster_picks || []).length > 0 || d.value_count > 0)
+      document.getElementById('btn-track').disabled = false;
   }
 }).catch(() => {});
 
@@ -189,7 +190,7 @@ document.getElementById('btn-scan').addEventListener('click', () => {
 // ── Track button ──────────────────────────────────────────────────────────────
 document.getElementById('btn-track').addEventListener('click', () => {
   fetch('/api/scan/track', {method: 'POST'}).then(r => r.json()).then(d => {
-    alert(`✓ ${d.tracked} value bets saved to history!`);
+    alert(`✓ ${d.tracked} tip${d.tracked !== 1 ? 's' : ''} saved to history!`);
   }).catch(e => alert('Error: ' + e));
 });
 
@@ -221,7 +222,7 @@ connectWS(msg => {
       renderTips(msg.results.tipster_picks || []);
       renderWatchlist(msg.results.watchlist || []);
       renderMarkets(msg.results.rows || [], msg.results.value_count || 0);
-      if (msg.results.value_count > 0)
+      if ((msg.results.tipster_picks || []).length > 0 || msg.results.value_count > 0)
         document.getElementById('btn-track').disabled = false;
     }
   }

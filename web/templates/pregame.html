@@ -305,6 +305,27 @@ function renderTips(picks) {
   }).join('');
 }
 
+// ── Form helpers ──────────────────────────────────────────────────────────────
+function formDots(form) {
+  if (!form || !form.last_5_results || !form.last_5_results.length) return '';
+  const clr = {W: '#00b894', D: '#b2bec3', L: '#d63031'};
+  return form.last_5_results.slice(-5).map(r =>
+    `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${clr[r.result]||'#636e72'}"
+      title="${r.result} ${r.scored}-${r.conceded}${r.opponent ? ' vs '+r.opponent : ''}"></span>`
+  ).join('');
+}
+function formRow(g) {
+  const hd = formDots(g.home_form);
+  const ad = formDots(g.away_form);
+  if (!hd && !ad) return '';
+  const abbr = n => (n || '').split(' ').slice(0,1).join('');
+  return `<div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
+    ${hd ? `<span class="text-xs text-dim opacity-60">${abbr(g.home_team)}</span><span class="flex gap-0.5">${hd}</span>` : ''}
+    ${(hd && ad) ? '<span class="text-dim opacity-30 text-xs">|</span>' : ''}
+    ${ad ? `<span class="text-xs text-dim opacity-60">${abbr(g.away_team)}</span><span class="flex gap-0.5">${ad}</span>` : ''}
+  </div>`;
+}
+
 // ── Render: Watchlist ─────────────────────────────────────────────────────────
 function renderWatchlist(games) {
   const tbody = document.getElementById('watchlist-tbody');
@@ -335,6 +356,7 @@ function renderWatchlist(games) {
       <td class="px-3 py-3">
         <div class="font-medium text-sm">${g.home_team} <span class="text-dim text-xs font-normal">vs</span> ${g.away_team}${steamBadge}${gBadge ? `<span class="ml-1 text-xs cursor-help" title="${gWarnings.join(' | ')}">${gBadge}</span>` : ''}</div>
         <div class="text-xs text-dim mt-0.5">${g.league}</div>
+        ${formRow(g)}
       </td>
       <td class="px-3 py-3 text-center font-mono text-sm">${ko}</td>
       <td class="px-3 py-3 text-center">
